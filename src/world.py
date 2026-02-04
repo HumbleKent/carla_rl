@@ -14,6 +14,7 @@ from src.weather_control import WeatherControl
 from src.traffic_control import TrafficControl
 from src.weather_control import WeatherControl
 from src.map_control     import MapControl
+from src.cone_control    import ConeControl
 import configuration as config
 import time
 
@@ -23,10 +24,19 @@ class World:
         if self.__client is None:
             self.__client = carla.Client(config.SIM_HOST, config.SIM_PORT)
             self.__client.set_timeout(config.SIM_TIMEOUT)
+        
+        # Load the default map if specified
+        current_map = self.__client.get_world().get_map().name.split('/')[-1]
+        if config.DEFAULT_MAP and config.DEFAULT_MAP not in current_map:
+            if config.VERBOSE:
+                print(f"Loading map {config.DEFAULT_MAP}...")
+            self.__client.load_world(config.DEFAULT_MAP)
+            
         self.__world = self.__client.get_world()
         self.__weather_control = WeatherControl(self.__world)
         self.__traffic_control = TrafficControl(self.__world)
         self.__map_control     = MapControl(self.__world, self.__client)
+        self.__cone_control    = ConeControl(self.__world)
         self.__map = self.__map_control.get_map()
         
         self.__synchronous_mode = synchronous_mode
@@ -47,6 +57,7 @@ class World:
     def destroy_world(self):
         self.destroy_pedestrians()
         self.destroy_vehicles()
+        self.destroy_cones()
     
     def tick(self):
         self.__world.tick()
@@ -122,6 +133,7 @@ class World:
     
     def update_traffic_map(self):
         self.__traffic_control.update_map(self.__map)
+        self.__cone_control.update_map(self.__map)
         return self.__map
     
     # ============ Weather Control ===============
@@ -156,3 +168,24 @@ class World:
         spectator_location = transform.location
 
         spectator.set_transform(carla.Transform(location=spectator_location, rotation=transform.rotation))
+
+    # ============ Cone Control ============
+    def spawn_cones_from_positions(self, cone_positions):
+        """Spawn traffic cones from a list of position dictionaries.
+        Args:
+            cone_positions: List of dicts with keys 'x', 'y', 'z'
+        """
+        for pos in cone_positions:
+            self.__cone_control.spawn_single_cone([pos['x'], pos['y'], pos['z']])
+    
+    def destroy_cones(self):
+        """Destroy all spawned traffic cones."""
+        self.__cone_control.destroy_cones()
+    
+    def get_active_cones(self):
+        """Get list of currently spawned cone actors."""
+        return self.__cone_control.get_active_cones()
+    
+    def get_cone_count(self):
+        """Get the number of currently spawned cones."""
+        return self.__cone_control.get_cone_count()

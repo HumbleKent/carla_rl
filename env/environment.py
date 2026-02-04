@@ -66,6 +66,7 @@ class CarlaEnv(gym.Env):
         self.__has_traffic = has_traffic
         self.__verbose = verbose
         self.__automatic_server_initialization = initialize_server
+        self.__cones_spawned = False  # Track if cones have been spawned
 
         # 1. Start the server
         if self.__automatic_server_initialization:
@@ -108,6 +109,53 @@ class CarlaEnv(gym.Env):
         self.__first_episode = True
         self.__episode_number = 0
         self.__restart_every = 5000 # Restart the server every n episodes so it doesn't crash
+        
+        # Load cone configuration
+        self.__cone_config = self.__load_cone_config()
+        
+    def __load_cone_config(self):
+        """Load traffic cone configuration from JSON file."""
+        try:
+            with open('env/cone_layout.json', 'r') as f:
+                return json.load(f)
+        except FileNotFoundError:
+            if self.__verbose:
+                print("Warning: cone_layout.json not found. No cones will be spawned.")
+            return None
+        except Exception as e:
+            if self.__verbose:
+                print(f"Error loading cone config: {e}")
+            return None
+    
+    def __spawn_all_cones(self):
+        """Spawn all traffic cones from configuration. Called once at first episode."""
+        if self.__cones_spawned or self.__cone_config is None:
+            return
+            
+        if self.__verbose:
+            print("Spawning traffic cones from cone_layout.json...")
+        
+        # cone_layout.json is a flat list of cone transforms
+        if isinstance(self.__cone_config, list):
+            total_cones = 0
+            for cone_data in self.__cone_config:
+                try:
+                    # Extract position
+                    position = {
+                        'x': cone_data['x'],
+                        'y': cone_data['y'],
+                        'z': cone_data.get('z', 0.0)
+                    }
+                    # Spawn cone
+                    self.__world.spawn_cones_from_positions([position])
+                    total_cones += 1
+                except Exception as e:
+                    if self.__verbose:
+                        print(f"Failed to spawn cone at ({cone_data.get('x', 0)}, {cone_data.get('y', 0)}): {e}")
+        
+            self.__cones_spawned = True
+            if self.__verbose:
+                print(f"Total cones spawned: {total_cones}")
         
     # ===================================================== GYM METHODS =====================================================                
     # This reset loads a random scenario and returns the initial state plus information about the scenario
@@ -156,6 +204,11 @@ class CarlaEnv(gym.Env):
         }
         
         self.number_of_steps = 0
+        
+        # Spawn cones once at the very first episode
+        if self.__episode_number == 1 and not self.__cones_spawned:
+            self.__spawn_all_cones()
+        
         # Return the observation and the scenario information
         return self.__observation, info
     
@@ -215,9 +268,15 @@ class CarlaEnv(gym.Env):
         # 2. Destroy pedestrians and traffic vehicles
         self.__world.destroy_vehicles()
         self.__world.destroy_pedestrians()
-        # 2. Destroy the world
+        # 3. Destroy traffic cones
+        if self.__cones_spawned:
+            if self.__verbose:
+                print("Destroying traffic cones...")
+            self.__world.destroy_cones()
+            self.__cones_spawned = False
+        # 4. Destroy the world
         self.__world.destroy_world()
-        # 3. Close the server
+        # 5. Close the server
         if self.__automatic_server_initialization:
             CarlaServer.close_server(self.__server_process)
 

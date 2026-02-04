@@ -26,3 +26,6 @@ SIM_FPS                 = 30
 ENV_SCENARIOS_FILE      = 'env/simple_scenarios.json'
 ENV_MAX_STEPS           = 430 # Max number of steps per episode. I suggest running the helpfull-scipts/check_max_num_steps.py script to get your number
 ENV_WAYPOINT_SPACING    = 7.0
+
+# Map attributes
+DEFAULT_MAP             = 'Town05'
