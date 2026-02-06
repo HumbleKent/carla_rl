@@ -73,8 +73,7 @@ class CarlaEnv(gym.Env):
             self.__server_process = CarlaServer.initialize_server(low_quality = config.SIM_LOW_QUALITY, offscreen_rendering = config.SIM_OFFSCREEN_RENDERING)
         
         # 2. Connect to the server
-        self.__world = World(synchronous_mode=self.__synchronous_mode)
-
+        self.__world = World(synchronous_mode=self.__synchronous_mode,map_name=config.SIM_MAP_NAME)
         # 3. Read the flag and get the appropriate situations
         self.__get_situations(scenarios)
         # 4. Create the vehicle
@@ -187,7 +186,7 @@ class CarlaEnv(gym.Env):
         
         # 4. Get the initial state (Get the observation data)
         time.sleep(0.5)
-        self.__update_observation()
+        self._update_observation()
         
         # 5. Start the reward function
         self.__reward_func.reset(self.__waypoints)
@@ -235,7 +234,7 @@ class CarlaEnv(gym.Env):
         if self.__show_sensor_data:
             self.display.play_window_tick()
         # 2. Update the observation
-        self.__update_observation()
+        self._update_observation()
         # 3. Calculate the reward
         reward = self.__reward_func.calculate_reward(self.__vehicle, self.__reward_current_pos, self.__reward_target_pos, self.__reward_next_waypoint_pos, self.__reward_speed)
         terminated = self.__reward_func.get_terminated()
@@ -282,7 +281,7 @@ class CarlaEnv(gym.Env):
 
 
     # ===================================================== OBSERVATION/ACTION METHODS =====================================================
-    def __update_observation(self):        
+    def _update_observation(self):        
         observation_space = self.__vehicle.get_observation_data()
         rgb_image = observation_space['rgb_data']
         vehicle_loc = self.__vehicle.get_location()
