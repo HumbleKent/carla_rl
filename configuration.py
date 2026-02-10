@@ -21,10 +21,9 @@ SIM_LOW_QUALITY         = False
 SIM_OFFSCREEN_RENDERING = False
 SIM_DELTA_SECONDS       = 0.05
 SIM_FPS                 = 30
-SIM_MAP_NAME            = 'Town05'
 
 # Environment attributes
-ENV_SCENARIOS_FILE      = 'env/simple_scenarios.json'
+ENV_SCENARIOS_FILE      = 'env/vehicle_spawn.json'
 ENV_MAX_STEPS           = 430 # Max number of steps per episode. I suggest running the helpfull-scipts/check_max_num_steps.py script to get your number
 ENV_WAYPOINT_SPACING    = 7.0
 

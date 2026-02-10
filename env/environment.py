@@ -73,7 +73,7 @@ class CarlaEnv(gym.Env):
             self.__server_process = CarlaServer.initialize_server(low_quality = config.SIM_LOW_QUALITY, offscreen_rendering = config.SIM_OFFSCREEN_RENDERING)
         
         # 2. Connect to the server
-        self.__world = World(synchronous_mode=self.__synchronous_mode,map_name=config.SIM_MAP_NAME)
+        self.__world = World(synchronous_mode=self.__synchronous_mode)
         # 3. Read the flag and get the appropriate situations
         self.__get_situations(scenarios)
         # 4. Create the vehicle
@@ -159,9 +159,9 @@ class CarlaEnv(gym.Env):
     # ===================================================== GYM METHODS =====================================================                
     # This reset loads a random scenario and returns the initial state plus information about the scenario
     # Options may include the name of the scenario to load    
-    def reset(self, seed=None, options={'scenario_name': None}):
+    def reset(self, seed=None, options=None):
         # 1. Choose a scenario
-        if options['scenario_name'] is not None:
+        if options is not None and 'scenario_name' in options and options['scenario_name'] is not None:
             self.__active_scenario_name = options['scenario_name']
         else:
             self.__active_scenario_name = self.__chose_situation(seed)

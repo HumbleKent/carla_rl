@@ -27,7 +27,8 @@ def test_cone_spawn():
         # 2. Get world
         print("Loading Town05...")
         world = client.load_world('Town05')
-        w print(f"Loading cone layout from {cone_layout_path}...")
+        cone_layout_path = 'env/cone_layout.json'
+        print(f"Loading cone layout from {cone_layout_path}...")
         
         if not os.path.exists(cone_layout_path):
             print(f"ERROR: {cone_layout_path} not found!")

@@ -24,14 +24,6 @@ class World:
         if self.__client is None:
             self.__client = carla.Client(config.SIM_HOST, config.SIM_PORT)
             self.__client.set_timeout(config.SIM_TIMEOUT)
-        
-        # Load the default map if specified
-        current_map = self.__client.get_world().get_map().name.split('/')[-1]
-        if config.DEFAULT_MAP and config.DEFAULT_MAP not in current_map:
-            if config.VERBOSE:
-                print(f"Loading map {config.DEFAULT_MAP}...")
-            self.__client.load_world(config.DEFAULT_MAP)
-            
         self.__world = self.__client.get_world()
         self.__weather_control = WeatherControl(self.__world)
         self.__traffic_control = TrafficControl(self.__world)
@@ -164,7 +156,6 @@ class World:
         transform = carla.Transform(location, rotation)
         spectator.set_transform(transform)
 
-        # Calculate the new spectator location
         spectator_location = transform.location
 
         spectator.set_transform(carla.Transform(location=spectator_location, rotation=transform.rotation))

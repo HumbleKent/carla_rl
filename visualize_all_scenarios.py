@@ -93,7 +93,7 @@ def spectator_manual_control():
         spectator = world.get_spectator()
         
         # Load cone layout
-        cone_layout_path = 'cone_layout.json'
+        cone_layout_path = 'env/cone_layout.json'
         if not os.path.exists(cone_layout_path):
             print(f"ERROR: {cone_layout_path} not found!")
             return
@@ -142,12 +142,12 @@ def spectator_manual_control():
         
         # Define camera positions for each scenario
         camera_configs = [
-            {"height": 60, "pitch": -70, "distance": 0},   # Lane Closure - top down
-            {"height": 50, "pitch": -60, "distance": 0},   # Pothole - angled
-            {"height": 40, "pitch": -50, "distance": 0},   # Chicane - lower angle
-            {"height": 60, "pitch": -70, "distance": 0},   # Barrier - top down
-            {"height": 50, "pitch": -60, "distance": 0},   # Diversion - angled
-            {"height": 55, "pitch": -65, "distance": 0},   # Lane Change - medium
+            {"height": 30, "pitch": -70, "distance": 0},   # Lane Closure - top down
+            {"height": 30, "pitch": -60, "distance": 0},   # Pothole - angled
+            {"height": 30, "pitch": -50, "distance": 0},   # Chicane - lower angle
+            {"height": 30, "pitch": -70, "distance": 0},   # Barrier - top down
+            {"height": 30, "pitch": -60, "distance": 0},   # Diversion - angled
+            {"height": 30, "pitch": -65, "distance": 0},   # Lane Change - medium
         ]
         
         print("=" * 60)
