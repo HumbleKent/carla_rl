@@ -1,6 +1,7 @@
 import os
 import argparse
 import time
+import carla
 import gymnasium as gym
 import numpy as np
 from stable_baselines3 import PPO
@@ -95,9 +96,46 @@ def main():
     except KeyboardInterrupt:
         print("\nEvaluation interrupted by user.")
     finally:
-        # 6. Cleanup - This ensures actors are destroyed
+        # 6. Cleanup
         print("Cleaning up environment and destroying actors...")
-        env.close()
+        try:
+            env.close()
+        except Exception:
+            pass
+        
+        # Deep cleanup: Applying world-level destruction logic directly for maximum robustness
+        try:
+            client = carla.Client('127.0.0.1', args.port)
+            client.set_timeout(5.0)
+            world = client.get_world()
+            
+            # Switch to asynchronous mode to ensure immediate destruction
+            settings = world.get_settings()
+            settings.synchronous_mode = False
+            settings.fixed_delta_seconds = None
+            world.apply_settings(settings)
+            
+            # Find and destroy all lingering actors in the world
+            actors = world.get_actors()
+            to_destroy = []
+            to_destroy.extend(list(actors.filter('vehicle.*')))
+            to_destroy.extend(list(actors.filter('sensor.*')))
+            to_destroy.extend(list(actors.filter('static.prop.constructioncone')))
+            to_destroy.extend(list(actors.filter('walker.*')))
+            to_destroy.extend(list(actors.filter('controller.ai.walker')))
+            
+            print(f"Deep cleanup: Found {len(to_destroy)} actors to destroy.")
+            for actor in to_destroy:
+                if actor.is_alive:
+                    try:
+                        actor.destroy()
+                    except Exception:
+                        pass # Ignore actors that already disappeared
+            
+            print("Deep cleanup: CARLA world is now clean.")
+        except Exception as e:
+            print(f"Notice: Secondary deep cleanup encountered an issue: {e}")
+            
         print("Evaluation complete.")
 
 if __name__ == "__main__":
