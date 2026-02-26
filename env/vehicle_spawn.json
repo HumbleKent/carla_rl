@@ -13,8 +13,8 @@
             "roll": 0.0
         },
         "target_position": {
-            "x": -1.06,
-            "y": 6.05,
+            "x": -2.00,
+            "y": 6.16,
             "z": 0.3
         },
         "traffic_density": "None",
@@ -35,7 +35,7 @@
         },
         "target_position": {
             "x": 35.05,
-            "y": 21.86,
+            "y": 17,
             "z": 0.3
         },
         "traffic_density": "None",
@@ -76,8 +76,8 @@
             "roll": 0.0
         },
         "target_position": {
-            "x": -13.54,
-            "y": -87.93,
+            "x": -8.02,
+            "y": -88.00,
             "z": 0.3
         },
         "traffic_density": "None",

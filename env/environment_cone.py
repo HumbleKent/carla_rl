@@ -7,13 +7,16 @@ from env.pre_processing import PreProcessing
 import env.observation_action_space_cone as cone_obs_space
 
 class ConePreProcessing(PreProcessing):
-    def preprocess_data(self, observation_data, cone_data):
-        # reuse standard logic for basic parts
+    def preprocess_data(self, observation_data, cone_data, last_action=None):
         # observation_data keys: rgb_data, position, target_position, next_waypoint_position, speed, situation
         
         target_distance = self.distance(observation_data['position'], observation_data['target_position'])
         next_waypoint_distance = self.distance(observation_data['position'], observation_data['next_waypoint_position'])
         speed = observation_data['speed'][0]
+        
+        # Action history (2 features)
+        if last_action is None:
+            last_action = np.array([0.0, 0.0], dtype=np.float32)
         
         # Flatten cone data
         # Cone data expected to be list of dicts: {'rel_x', 'rel_y', 'dist'}
@@ -32,7 +35,7 @@ class ConePreProcessing(PreProcessing):
             # Should be handled before by sorting, but just in case
             cone_features = cone_features[:num_expected_cones*3]
             
-        rest_list = [target_distance, next_waypoint_distance, speed] + cone_features
+        rest_list = [target_distance, next_waypoint_distance, speed] + list(last_action) + cone_features
         rest_vector = np.array(rest_list, dtype=np.float32)
         
         # Original keys were 'position', 'target_position' etc. but mapped to 'rest' in PreProcessing.
@@ -53,7 +56,12 @@ class ConeCarlaEnv(CarlaEnv):
         self.observation_space = cone_obs_space.observation_space
         self.cone_pre_processing = ConePreProcessing()
         self.num_cones_to_track = 5
+        self.last_action = np.array([0.0, 0.0], dtype=np.float32)
         
+    def reset(self, seed=None, options=None):
+        self.last_action = np.array([0.0, 0.0], dtype=np.float32)
+        return super().reset(seed=seed, options=options)
+
     def _update_observation(self):        
         # Access private members using name mangling
         vehicle = self._CarlaEnv__vehicle
@@ -119,7 +127,7 @@ class ConeCarlaEnv(CarlaEnv):
         }
         
         # Use our custom pre-processing
-        self._CarlaEnv__observation = self.cone_pre_processing.preprocess_data(observation, cone_data)
+        self._CarlaEnv__observation = self.cone_pre_processing.preprocess_data(observation, cone_data, last_action=self.last_action)
         
         # Aux variables for reward function
         self._CarlaEnv__reward_target_pos = target_position
@@ -141,5 +149,8 @@ class ConeCarlaEnv(CarlaEnv):
             self._CarlaEnv__reward_speed,
             cone_data=self.current_cone_data
         )
+        
+        # Store action for next step's observation
+        self.last_action = np.array(action, dtype=np.float32)
         
         return obs, reward, terminated, truncated, info
