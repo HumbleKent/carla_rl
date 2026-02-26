@@ -12,8 +12,8 @@ observation_shapes = {
     'num_of_stuations': 4
 }
 
-# 3 standard features + 5 cones * 3 features (dx, dy, dist) + 2 action history (steer, throttle) = 20
-REST_DIM = 3 + (5 * 3) + 2
+# 2 nav features + 4 kinematics (yaw_err, ang_z, fwd_v, lat_v) + 2 action history + 15 cones = 23
+REST_DIM = 2 + 4 + 2 + (5 * 3)
 
 observation_space = spaces.Dict({
     'rgb_data': spaces.Box(low=0, high=255, shape=observation_shapes['rgb_data'], dtype=np.uint8),
