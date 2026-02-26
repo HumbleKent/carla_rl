@@ -66,6 +66,9 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--ports", nargs='+', type=int, default=[2000], help="List of CARLA server ports")
     parser.add_argument("--run-name", type=str, default="v1", help="Unique name for this training run")
+    parser.add_argument("--load-path", type=str, default=None, help="Path to a previous model to continue training")
+    parser.add_argument("--eval-freq", type=int, default=1000, help="Number of steps between evaluations")
+    parser.add_argument("--total-steps", type=int, default=1000000, help="Total timesteps to train for")
     args = parser.parse_args()
 
     print(f"Starting training on ports {args.ports} with run name '{args.run_name}'")
@@ -116,25 +119,35 @@ def main():
 
     # 4. MODEL
     policy_kwargs = dict(features_extractor_class=CustomExtractor_PPO_Cone)
-    model = PPO(
-        "MultiInputPolicy",
-        env,
-        policy_kwargs=policy_kwargs,
-        verbose=1,
-        tensorboard_log=tensorboard_dir,
-        n_steps=1024,
-        batch_size=64,
-        device=device
-    )
+    if args.load_path and os.path.exists(args.load_path):
+        print(f"Loading previous model from: {args.load_path}")
+        model = PPO.load(
+            args.load_path, 
+            env=env, 
+            device=device, 
+            custom_objects={"tensorboard_log": tensorboard_dir}
+        )
+    else:
+        print("Creating fresh model...")
+        model = PPO(
+            "MultiInputPolicy",
+            env,
+            policy_kwargs=policy_kwargs,
+            verbose=1,
+            tensorboard_log=tensorboard_dir,
+            n_steps=1024,
+            batch_size=64,
+            device=device
+        )
 
     # 5. CALLBACKS
     checkpoint_callback = CheckpointCallback(save_freq=5000, save_path=checkpoint_dir, name_prefix=f"ppo_{args.run_name}")
-    eval_callback = CustomEvalCallback(env, eval_freq=1000, log_path=log_dir)
+    eval_callback = CustomEvalCallback(env, eval_freq=args.eval_freq, log_path=log_dir)
     callback = CallbackList([checkpoint_callback, eval_callback])
 
     # 6. LEARN
     try:
-        model.learn(total_timesteps=1000000, callback=callback)
+        model.learn(total_timesteps=args.total_steps, callback=callback)
     except KeyboardInterrupt:
         print("\nTraining interrupted by user.")
     finally:
