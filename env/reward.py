@@ -25,6 +25,7 @@ class Reward:
         self.current_throttle = 0.0
         self.waypoints        = []      
         self.total_ep_reward  = 0  
+        self.prev_target_distance = None # Used to calculate distance progress
         
         self.countint = 0
 
@@ -37,12 +38,29 @@ class Reward:
             self.countint += 1
             print("The episode already ended!!!, count: ", self.countint)
             
+        # 1. Living Penalty (The 'Cost of Time')
+        # We penalize -20 points if the agent stays forever (2400 steps). 
+        # This MUST be larger than the static 'standing still' reward.
+        living_penalty = -20.0 / config.ENV_MAX_STEPS
+        
+        # 2. Distance Delta (The 'Progress Reward')
+        # We reward the agent for every meter it gets closer than the previous step.
+        distance_reward = 0.0
+        if self.prev_target_distance is not None:
+            # Positive if getting closer, negative if moving away
+            delta = self.prev_target_distance - target_distance
+            distance_reward = delta * 0.5 # 0.5 points per meter progressed
+            
+        self.prev_target_distance = target_distance
+
         reward = self.__collision_reward(vehicle) + \
             self.__steering_jerk(vehicle) + \
             self.__throttle_brake_jerk(vehicle) + \
             self.__speed_reward(speed) + \
             self.__target_destination(target_distance) + \
-            self.__waypoint_reached(next_waypoint_distance)
+            self.__waypoint_reached(next_waypoint_distance) + \
+            living_penalty + \
+            distance_reward
         
         self.total_ep_reward += reward
         
@@ -254,6 +272,7 @@ class Reward:
         self.current_throttle = 0.0
         self.waypoints        = waypoints
         self.total_ep_reward  = 0
+        self.prev_target_distance = None # Reset distance tracking
     
     def get_terminated(self):
         return self.terminated

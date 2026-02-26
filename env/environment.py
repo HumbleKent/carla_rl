@@ -178,11 +178,14 @@ class CarlaEnv(gym.Env):
             self.clean_scenario()
             print("Scenario loading interrupted!")
             exit(0)        
+
+        # self.__world.tick()
         # 3. Place the spectator
         self.place_spectator_above_vehicle()
         
         # 4. Get list of waypoints to the target from the starting position
         self.__waypoints = self.get_path_waypoints(spacing=config.ENV_WAYPOINT_SPACING)
+
         # Turn each waypoint into a list of 3 elements
         self.__waypoints = [np.array([w.x, w.y, w.z]) for w in self.__waypoints]
         
@@ -482,7 +485,8 @@ class CarlaEnv(gym.Env):
             if not next_wps:
                 break
             current_waypoint = next_wps[0]
-        
+
+        # self.draw_waypoints(waypoints, life_time=5.0) # <--- Add this
         return waypoints[1:] # Take out the first waypoint because it is the starting point
         
 
