@@ -30,7 +30,7 @@ class Reward:
         self.countint = 0
 
     # ======================================== Main Reward Function ==========================================================
-    def calculate_reward(self, vehicle: Vehicle, current_pos, target_pos, next_waypoint_pos, speed) -> float:   
+    def calculate_reward(self, vehicle: Vehicle, current_pos, target_pos, next_waypoint_pos, speed, cone_data=None) -> float:   
         target_distance = self.distance(current_pos, target_pos)
         next_waypoint_distance = self.distance(current_pos, next_waypoint_pos)
         
@@ -39,19 +39,21 @@ class Reward:
             print("The episode already ended!!!, count: ", self.countint)
             
         # 1. Living Penalty (The 'Cost of Time')
-        # We penalize -20 points if the agent stays forever (2400 steps). 
-        # This MUST be larger than the static 'standing still' reward.
         living_penalty = -20.0 / config.ENV_MAX_STEPS
         
-        # 2. Distance Delta (The 'Progress Reward')
-        # We reward the agent for every meter it gets closer than the previous step.
+        # 2. Stand-Still Penalty (Extra frustration for being stuck)
+        stand_still_penalty = self.__stand_still_penalty(speed)
+
+        # 3. Distance Delta (The 'Progress Reward')
         distance_reward = 0.0
         if self.prev_target_distance is not None:
-            # Positive if getting closer, negative if moving away
             delta = self.prev_target_distance - target_distance
-            distance_reward = delta * 0.5 # 0.5 points per meter progressed
+            distance_reward = delta * 0.5 
             
         self.prev_target_distance = target_distance
+
+        # 4. Proximity Cone Penalty (Near-misses)
+        cone_proximity_penalty = self.__proximity_cone_penalty(cone_data)
 
         reward = self.__collision_reward(vehicle) + \
             self.__steering_jerk(vehicle) + \
@@ -60,7 +62,9 @@ class Reward:
             self.__target_destination(target_distance) + \
             self.__waypoint_reached(next_waypoint_distance) + \
             living_penalty + \
-            distance_reward
+            stand_still_penalty + \
+            distance_reward + \
+            cone_proximity_penalty
         
         self.total_ep_reward += reward
         
@@ -138,6 +142,28 @@ class Reward:
         else:
             return -lbd
 
+    def __stand_still_penalty(self, speed):
+        """Penalize the agent for not moving when it should be."""
+        if speed < 1.0:
+            # -30 penalty spread across the max steps
+            return -30.0 / config.ENV_MAX_STEPS
+        return 0.0
+
+    def __proximity_cone_penalty(self, cone_data, safe_distance=2.5):
+        """Penalize being too close to a cone (near-miss penalty)."""
+        if not cone_data:
+            return 0.0
+        
+        penalty = 0.0
+        for cone in cone_data:
+            dist = cone['dist']
+            if dist < safe_distance:
+                # Exponential penalty: Getting closer is much worse
+                # At 0m (overlap) this is -1.0. At 2.5m this is 0.
+                penalty -= (1.0 - (dist / safe_distance)) * (10.0 / config.ENV_MAX_STEPS)
+        
+        return penalty
+
     def __target_destination(self, target_distance, threshold=5.0):
         '''
         This function rewards the vehicle more generously the closer it gets to the target, and, if it reaches the target, it gives an incredibly high reward, as to tell him that it arrived. The reward is calculated as follows:
@@ -152,7 +178,7 @@ class Reward:
         '''
         if target_distance <= threshold:
             self.terminated = True
-            return 100.0
+            return 500.0 # Massive bonus to ensure the model prioritizes finishing
         elif target_distance > threshold and target_distance <= 50.0:
             return (-7.0*target_distance + 395.0) / (9.0 * config.ENV_MAX_STEPS)
         elif target_distance > 50.0 and target_distance <= 100.0:

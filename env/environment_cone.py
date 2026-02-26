@@ -126,3 +126,20 @@ class ConeCarlaEnv(CarlaEnv):
         self._CarlaEnv__reward_current_pos = current_position
         self._CarlaEnv__reward_next_waypoint_pos = next_waypoint_position
         self._CarlaEnv__reward_speed = speed[0]
+        self.current_cone_data = cone_data # Store for step()
+
+    def step(self, action):
+        # Use parent logic for control and observation update
+        obs, _, terminated, truncated, info = super().step(action)
+        
+        # recalculate reward using cone data
+        reward = self._CarlaEnv__reward_func.calculate_reward(
+            self._CarlaEnv__vehicle, 
+            self._CarlaEnv__reward_current_pos, 
+            self._CarlaEnv__reward_target_pos, 
+            self._CarlaEnv__reward_next_waypoint_pos, 
+            self._CarlaEnv__reward_speed,
+            cone_data=self.current_cone_data
+        )
+        
+        return obs, reward, terminated, truncated, info
