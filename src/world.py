@@ -19,10 +19,11 @@ import configuration as config
 import time
 
 class World:
-    def __init__(self, client=None, synchronous_mode=False) -> None:
+    def __init__(self, client=None, synchronous_mode=False, port=None) -> None:
         self.__client = client
         if self.__client is None:
-            self.__client = carla.Client(config.SIM_HOST, config.SIM_PORT)
+            target_port = port if port is not None else config.SIM_PORT
+            self.__client = carla.Client(config.SIM_HOST, target_port)
             self.__client.set_timeout(config.SIM_TIMEOUT)
         self.__world = self.__client.get_world()
         self.__weather_control = WeatherControl(self.__world)
@@ -147,7 +148,7 @@ class World:
     # ============ Spectator Control ============
     def place_spectator_above_location(self, location):
         spectator = self.__world.get_spectator()
-        spectator.set_transform(carla.Transform(location + carla.Location(z=50),
+        spectator.set_transform(carla.Transform(location + carla.Location(z=25),
         carla.Rotation(pitch=-90)))
 
     def place_spectator_behind_location(self, location, rotation):
@@ -168,6 +169,10 @@ class World:
         """
         for pos in cone_positions:
             self.__cone_control.spawn_single_cone([pos['x'], pos['y'], pos['z']])
+
+    def spawn_cones_from_json(self, json_path=config.ENV_CONE_LAYOUT_FILE):
+        """Load cone positions from a JSON file and spawn them."""
+        self.__cone_control.spawn_cones_from_json(json_path)
     
     def destroy_cones(self):
         """Destroy all spawned traffic cones."""

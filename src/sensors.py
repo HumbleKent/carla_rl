@@ -185,6 +185,94 @@ class Lidar:
     def destroy(self):
         self.__sensor.destroy()
 
+# ====================================== Semantic LiDAR ======================================
+class Semantic_Lidar:
+    def __init__(self, world, vehicle, sensor_dict):
+        self.__sensor = self.attach_semantic_lidar(world, vehicle, sensor_dict)
+        self.__last_data = None
+        self.__raw_data = None
+        self.__sensor_ready = False
+        self.__sensor.listen(lambda data: self.callback(data))
+
+    def attach_semantic_lidar(self, world, vehicle, sensor_dict):
+        sensor_bp = world.get_blueprint_library().find('sensor.lidar.ray_cast_semantic')
+        # attributes
+        sensor_bp.set_attribute('channels', str(sensor_dict['channels']))
+        sensor_bp.set_attribute('points_per_second', str(sensor_dict['points_per_second']))
+        sensor_bp.set_attribute('rotation_frequency', str(sensor_dict['rotation_frequency']))
+        sensor_bp.set_attribute('range', str(sensor_dict['range']))
+        sensor_bp.set_attribute('upper_fov', str(sensor_dict['upper_fov']))
+        sensor_bp.set_attribute('lower_fov', str(sensor_dict['lower_fov']))
+        sensor_bp.set_attribute('sensor_tick', str(sensor_dict['sensor_tick']))
+        
+        # Position transform
+        transform = carla.Transform(carla.Location(x=sensor_dict['location_x'], y=sensor_dict['location_y'] , z=sensor_dict['location_z']))
+        lidar_sensor = world.spawn_actor(sensor_bp, transform, attach_to=vehicle)
+
+        return lidar_sensor
+    
+    def callback(self, data):
+        global configuration
+
+        # Extract semantic lidar data
+        # Format: [x, y, z, CosAngle, ObjIdx, ObjTag]
+        data_buffer = np.frombuffer(data.raw_data, dtype=np.dtype([
+            ('x', np.float32), ('y', np.float32), ('z', np.float32),
+            ('CosAngle', np.float32), ('ObjIdx', np.uint32), ('ObjTag', np.uint32)]))
+
+        # Convert to a more usable numpy array [x, y, z, label]
+        points = np.array([data_buffer['x'], data_buffer['y'], data_buffer['z'], data_buffer['ObjTag']]).T
+
+        # Ensure a fixed number of points for RL agent consistency
+        fixed_num_points = 500
+        if points.shape[0] < fixed_num_points:
+            points = np.pad(points, ((0, fixed_num_points - points.shape[0]), (0, 0)), mode='constant')
+        elif points.shape[0] > fixed_num_points:
+            indices = np.linspace(0, points.shape[0] - 1, fixed_num_points, dtype=int)
+            points = points[indices]
+
+        self.__raw_data = points
+        self.__sensor_ready = True
+
+        # Visualization processing (matching the standard Lidar visualization style)
+        points_xyz = points[:, :3]
+        labels = points[:, 3]
+
+        width, height = 640, 360
+        lidar_image_array = np.zeros((height, width))
+
+        # Scale and shift coordinates to fit 2D view
+        x_scaled = ((points_xyz[:, 0] + 50) / 100) * (width - 1)
+        y_scaled = ((points_xyz[:, 1] + 50) / 100) * (height - 1)
+
+        x_indices = np.round(x_scaled).astype(int)
+        y_indices = np.round(y_scaled).astype(int)
+
+        x_indices = np.clip(x_indices, 0, width - 1)
+        y_indices = np.clip(y_indices, 0, height - 1)
+
+        # Place the label in the image for visualization (scaled for visibility)
+        lidar_image_array[y_indices, x_indices] = (labels + 1) * 8 
+
+        lidar_image_array = np.clip(lidar_image_array, 0, 255)
+        self.__last_data = lidar_image_array
+
+        if configuration.VERBOSE:
+            timestamp = data.timestamp
+            cv2.imwrite(f'data/semantic_lidar/{timestamp}.png', lidar_image_array)
+    
+    def get_last_data(self):
+        return self.__last_data
+    
+    def get_data(self):
+        return self.__raw_data
+    
+    def is_ready(self):
+        return self.__sensor_ready
+    
+    def destroy(self):
+        self.__sensor.destroy()
+
 # ====================================== Radar ======================================
 class Radar:
     def __init__(self, world, vehicle, sensor_dict):
@@ -292,6 +380,8 @@ class GNSS:
         return self.__last_data
     
     def get_data(self):
+        if self.__last_data is None:
+            return np.array([0.0, 0.0, 0.0])
         return np.array([self.__last_data.latitude, self.__last_data.longitude, self.__last_data.altitude])
     
     def is_ready(self):
@@ -326,6 +416,15 @@ class IMU:
 
     def get_last_data(self):
         return self.__last_data
+    
+    def get_data(self):
+        if self.__last_data is None:
+            return np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+        return np.array([
+            self.__last_data.accelerometer.x, self.__last_data.accelerometer.y, self.__last_data.accelerometer.z,
+            self.__last_data.gyroscope.x, self.__last_data.gyroscope.y, self.__last_data.gyroscope.z,
+            self.__last_data.compass
+        ])
     
     def is_ready(self):
         return self.__sensor_ready

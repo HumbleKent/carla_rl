@@ -136,6 +136,9 @@ class Vehicle:
                 self.__sensor_dict[sensor]    = sensors.Collision(world=world, vehicle=self.__vehicle, sensor_dict=vehicle_data['collision'])
             elif sensor == 'lane_invasion':
                 self.__sensor_dict[sensor]    = sensors.Lane_Invasion(world=world, vehicle=self.__vehicle, sensor_dict=vehicle_data['lane_invasion'])
+            elif sensor == 'semantic_lidar':
+                self.__sensor_dict[sensor]    = sensors.Semantic_Lidar(world=world, vehicle=self.__vehicle, sensor_dict=vehicle_data['semantic_lidar'])
+                os.makedirs('data/semantic_lidar', exist_ok=True)
             else:
                 print('Error: Unknown sensor ', sensor)
     
@@ -148,6 +151,9 @@ class Vehicle:
         if 'lidar' in self.__sensor_dict:
             lidar_data = self.__sensor_dict['lidar'].get_data()
             data_dict['lidar_data'] = lidar_data
+        if 'semantic_lidar' in self.__sensor_dict:
+            semantic_lidar_data = self.__sensor_dict['semantic_lidar'].get_data()
+            data_dict['semantic_lidar_data'] = semantic_lidar_data
         if 'gnss' in self.__sensor_dict:
             gnss_data = self.__sensor_dict['gnss'].get_data()
             data_dict['gnss_data'] = gnss_data

@@ -1,33 +1,35 @@
-from env.environment_cone import ConeCarlaEnv
-from stable_baselines3 import PPO
-import gymnasium as gym
-from gymnasium.envs.registration import register
-import configuration as config
-
-from agent.cone_architecture import CustomExtractor_PPO_Cone
-
-from stable_baselines3.common.callbacks import CheckpointCallback, EvalCallback, CallbackList, StopTrainingOnMaxEpisodes
-from stable_baselines3.common.vec_env import DummyVecEnv, VecTransposeImage
-import numpy as np
-import wandb
+import sys
 import os
+import glob
+import traceback
+import argparse
+import time
+import json
+import random
 
-# Register the new environment
-register(
-    id="carla-cone-rl-gym-v0",
-    entry_point="env.environment_cone:ConeCarlaEnv",
-    max_episode_steps=config.ENV_MAX_STEPS,
-)
+import carla
+import gymnasium as gym
+import numpy as np
+from stable_baselines3 import PPO
+from stable_baselines3.common.vec_env import SubprocVecEnv, VecTransposeImage, DummyVecEnv
+from stable_baselines3.common.callbacks import CheckpointCallback, EvalCallback, CallbackList
+from stable_baselines3.common.monitor import Monitor
+from gymnasium.envs.registration import register
 
-LOG_IN_WANDB = True
-NUM_EPISODES = 15000
-EVALUATE_EVERY = 1000
+import configuration as config
+from env.environment_cone import ConeCarlaEnv
+from agent.cone_architecture import CustomExtractor_PPO_Cone
+from src.world import World
 
-# Set up wandb
-if LOG_IN_WANDB:
-    wandb.init(project='CarlaGym-Cone-Avoidance')
-    wandb.define_metric("episode")
-    wandb.define_metric("reward_mean", step_metric="episode")
+# Register the environment if not already
+try:
+    register(
+        id="carla-cone-rl-gym-v0",
+        entry_point="env.environment_cone:ConeCarlaEnv",
+        max_episode_steps=config.ENV_MAX_STEPS,
+    )
+except Exception:
+    pass
 
 class CustomEvalCallback(EvalCallback):
     def __init__(self, env, eval_freq, log_path, n_eval_episodes=5, deterministic=True, render=False):
@@ -41,83 +43,136 @@ class CustomEvalCallback(EvalCallback):
         if self.n_calls % self.eval_freq == 0:
             self.eval_results.append(self.last_mean_reward)
             self.episode_numbers.append(self.n_calls // self.eval_freq)
-            if LOG_IN_WANDB:
-                wandb.log({"reward_mean": self.last_mean_reward, "episode": self.n_calls // self.eval_freq})
         return result
 
-    def get_results(self):
-        return (self.eval_results, self.episode_numbers)
-
-def make_env():
-    # Use the new ID
-    env = gym.make('carla-cone-rl-gym-v0', time_limit=30, initialize_server=False, random_weather=False, synchronous_mode=True, continuous=True, show_sensor_data=False, has_traffic=False, verbose=False)
-    env = DummyVecEnv([lambda: env])
-    env = VecTransposeImage(env)
-    return env
+def make_env(port, rank=0, spawn_cones=False):
+    def _init():
+        env = gym.make('carla-cone-rl-gym-v0', 
+                       port=port, 
+                       time_limit=30, 
+                       initialize_server=False, 
+                       synchronous_mode=True, 
+                       show_sensor_data=False, 
+                       spawn_cones=spawn_cones,
+                       verbose=False,
+                       action_jitter=0.05)  # Add small noise to actions for exploration
+        # Seed the environment to ensure each parallel instance is unique
+        env.reset(seed=int(time.time()) + rank)
+        env = Monitor(env)
+        return env
+    return _init
 
 def main():
-    env = make_env()
-    
-    # Ensure directories exist
-    os.makedirs("./checkpoints/ppo_cone/", exist_ok=True)
-    os.makedirs("./logs_cone/", exist_ok=True)
-    os.makedirs("./tensorboard_cone/", exist_ok=True)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--ports", nargs='+', type=int, default=[2000], help="List of CARLA server ports")
+    parser.add_argument("--run-name", type=str, default="v1", help="Unique name for this training run")
+    args = parser.parse_args()
 
-    checkpoint_callback = CheckpointCallback(
-        save_freq=10000,
-        save_path="./checkpoints/ppo_cone/",
-        name_prefix="ppo_cone_checkpoint",
-        save_replay_buffer=True,
-        save_vecnormalize=True,
-    )
+    print(f"Starting training on ports {args.ports} with run name '{args.run_name}'")
+
+    # CUDA Check
+    import torch
+    print(f"CUDA Available: {torch.cuda.is_available()}")
+    if torch.cuda.is_available():
+        print(f"Current Device: {torch.cuda.get_device_name(0)}")
+        device = "cuda"
+    else:
+        print("WARNING: CUDA not found in this environment. Training will be slow on CPU.")
+        device = "cpu"
+
+    # 1. PRE-CHECK: Ensure CARLA servers are reachable and SPAWN CONES
+    for port in args.ports:
+        print(f"Connecting to CARLA on 127.0.0.1:{port} for setup...")
+        time.sleep(1)
+        try:
+            client = carla.Client('127.0.0.1', port)
+            client.set_timeout(15.0)
+            # Create a temporary World to spawn cones
+            world_obj = World(client=client, synchronous_mode=True)
+            world_obj.spawn_cones_from_json()
+            # Tick once to ensure they are registered
+            client.get_world().tick()
+            print(f"Successfully spawned cones and verified port {port}")
+        except Exception as e:
+            print(f"CRITICAL: Could not setup CARLA on port {port}. Error: {e}")
+            sys.exit(1)
+
+    # 2. CREATE VECTOR ENV
+    print("Creating training environments...")
+    if len(args.ports) > 1:
+        env = SubprocVecEnv([make_env(port=p, rank=i, spawn_cones=False) for i, p in enumerate(args.ports)])
+    else:
+        env = DummyVecEnv([make_env(port=args.ports[0], spawn_cones=False)])
     
-    # Adjust eval_freq to be appropriate for every 1000 episodes
-    eval_callback = CustomEvalCallback(env, eval_freq=env.envs[0].spec.max_episode_steps * EVALUATE_EVERY, log_path="./logs_cone/")
-    
-    callback_max_episodes = StopTrainingOnMaxEpisodes(max_episodes=NUM_EPISODES, verbose=1)
-    
-    callback = CallbackList([checkpoint_callback, eval_callback, callback_max_episodes])
-    
-    policy_kwargs = dict(
-        features_extractor_class=CustomExtractor_PPO_Cone,
-    )
-    
+    env = VecTransposeImage(env)
+
+    # 3. DIRECTORIES
+    log_dir = f"./logs_cone/{args.run_name}/"
+    checkpoint_dir = f"./checkpoints/ppo_cone_{args.run_name}/"
+    tensorboard_dir = f"./tensorboard_cone/{args.run_name}/"
+    os.makedirs(log_dir, exist_ok=True)
+    os.makedirs(checkpoint_dir, exist_ok=True)
+    os.makedirs(tensorboard_dir, exist_ok=True)
+
+    # 4. MODEL
+    policy_kwargs = dict(features_extractor_class=CustomExtractor_PPO_Cone)
     model = PPO(
-        policy="MultiInputPolicy",
+        "MultiInputPolicy",
+        env,
         policy_kwargs=policy_kwargs,
-        env=env,
+        verbose=1,
+        tensorboard_log=tensorboard_dir,
         n_steps=1024,
         batch_size=64,
-        n_epochs=4,
-        gamma=0.999,
-        tensorboard_log="./tensorboard_cone/",
-        gae_lambda=0.98,
-        ent_coef=0.01,
-        verbose=1,
+        device=device
     )
-    
-    # Calculate total_timesteps based on NUM_EPISODES episodes
-    total_timesteps = NUM_EPISODES * (env.envs[0].spec.max_episode_steps + 100) 
-    model.learn(total_timesteps=total_timesteps, callback=callback)
-    
-    model.save(f"checkpoints/ppo_cone/ppo_sb3_cone_{NUM_EPISODES}_final")
 
-    eval_list, episodes_list = eval_callback.get_results()
+    # 5. CALLBACKS
+    checkpoint_callback = CheckpointCallback(save_freq=5000, save_path=checkpoint_dir, name_prefix=f"ppo_{args.run_name}")
+    eval_callback = CustomEvalCallback(env, eval_freq=1000, log_path=log_dir)
+    callback = CallbackList([checkpoint_callback, eval_callback])
 
-    with open(f"ppo_cone_{NUM_EPISODES}_last_execution.txt", "w") as f:
-            f.write(f"reward_means: {eval_list}\n")
-            f.write(f"episodes: {episodes_list}\n")
-            f.write(f"n_steps: {model.num_timesteps}\n")
-            f.write(f"batch_size: {model.batch_size}\n")
-            f.write(f"n_epochs: {model.n_epochs}\n")
-            f.write(f"gamma: {model.gamma}\n")
-            f.write(f"gae_lambda: {model.gae_lambda}\n")
-            f.write(f"ent_coef: {model.ent_coef}\n")
-    
-    if LOG_IN_WANDB:
-        wandb.finish()
+    # 6. LEARN
+    try:
+        model.learn(total_timesteps=1000000, callback=callback)
+    except KeyboardInterrupt:
+        print("\nTraining interrupted by user.")
+    finally:
+        print("Closing environment and cleaning up...")
+        try:
+            env.close()
+        except:
+            pass
         
-    env.close()
+        # Final cleanup of all CARLA actors on all ports
+        for port in args.ports:
+            try:
+                print(f"Performing deep cleanup on port {port}...")
+                client = carla.Client('127.0.0.1', port)
+                client.set_timeout(5.0)
+                world = client.get_world()
+                
+                # Turn off sync mode to ensure actors are destroyed immediately
+                settings = world.get_settings()
+                settings.synchronous_mode = False
+                settings.fixed_delta_seconds = None
+                world.apply_settings(settings)
+                
+                # Destroy all vehicles, walkers, sensors and cones
+                actors = world.get_actors()
+                for actor in actors.filter('vehicle.*'):
+                    if actor.is_alive: actor.destroy()
+                for actor in actors.filter('sensor.*'):
+                    if actor.is_alive: actor.destroy()
+                for actor in actors.filter('walker.*'):
+                    if actor.is_alive: actor.destroy()
+                for actor in actors.filter('static.prop.constructioncone'):
+                    if actor.is_alive: actor.destroy()
+                
+                time.sleep(1) # Give time for destruction
+                print(f"Cleanup finished on port {port}")
+            except Exception as e:
+                print(f"Failed to cleanup port {port}: {e}")
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

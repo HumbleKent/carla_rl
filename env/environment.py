@@ -55,10 +55,11 @@ from env.pre_processing import PreProcessing
 # Name: 'carla-rl-gym-v0'
 class CarlaEnv(gym.Env):
     metadata = {"render_modes": ["human"], "render_fps": config.SIM_FPS}
-    def __init__(self, continuous=True, scenarios=[], time_limit=60, initialize_server=True, random_weather=False, random_traffic=False, synchronous_mode=True, show_sensor_data=False, has_traffic=True, verbose=True):
+    def __init__(self, continuous=True, scenarios=[], time_limit=60, initialize_server=True, random_weather=False, random_traffic=False, synchronous_mode=True, show_sensor_data=False, has_traffic=True, verbose=True, spawn_cones=True, port=None, action_jitter=0.0):
         super().__init__()
         # Read the environment settings
         self.__is_continuous = continuous
+        self.__port = port if port is not None else config.SIM_PORT
         self.__random_weather = random_weather
         self.__random_traffic = random_traffic
         self.__synchronous_mode = synchronous_mode
@@ -67,13 +68,15 @@ class CarlaEnv(gym.Env):
         self.__verbose = verbose
         self.__automatic_server_initialization = initialize_server
         self.__cones_spawned = False  # Track if cones have been spawned
+        self.__spawn_cones = spawn_cones # Flag to control cone spawning
+        self.__action_jitter = action_jitter  # Noise level for action exploration
 
         # 1. Start the server
         if self.__automatic_server_initialization:
             self.__server_process = CarlaServer.initialize_server(low_quality = config.SIM_LOW_QUALITY, offscreen_rendering = config.SIM_OFFSCREEN_RENDERING)
         
         # 2. Connect to the server
-        self.__world = World(synchronous_mode=self.__synchronous_mode)
+        self.__world = World(synchronous_mode=self.__synchronous_mode, port=self.__port)
         # 3. Read the flag and get the appropriate situations
         self.__get_situations(scenarios)
         # 4. Create the vehicle
@@ -153,8 +156,9 @@ class CarlaEnv(gym.Env):
                         print(f"Failed to spawn cone at ({cone_data.get('x', 0)}, {cone_data.get('y', 0)}): {e}")
         
             self.__cones_spawned = True
-            if self.__verbose:
-                print(f"Total cones spawned: {total_cones}")
+            
+            # Tick the world so clones are registered in the state
+            self.__world.tick()
         
     # ===================================================== GYM METHODS =====================================================                
     # This reset loads a random scenario and returns the initial state plus information about the scenario
@@ -167,15 +171,13 @@ class CarlaEnv(gym.Env):
             self.__active_scenario_name = self.__chose_situation(seed)
         
         # 2. Load the scenario
-        print(f"Loading scenario {self.__active_scenario_name}...")
+        print(f"[Port {self.__port}] Loading scenario {self.__active_scenario_name}...")
         try:
             self.load_scenario(self.__active_scenario_name, seed)
         except KeyboardInterrupt as e:
             self.clean_scenario()
             print("Scenario loading interrupted!")
-            exit(0)
-        print("Scenario loaded!")
-        
+            exit(0)        
         # 3. Place the spectator
         self.place_spectator_above_vehicle()
         
@@ -185,7 +187,14 @@ class CarlaEnv(gym.Env):
         self.__waypoints = [np.array([w.x, w.y, w.z]) for w in self.__waypoints]
         
         # 4. Get the initial state (Get the observation data)
-        time.sleep(0.5)
+        # Wait for sensors to be ready
+        MAX_SENSORS_WAIT = 50 # 5 seconds
+        waited = 0
+        while not self.__vehicle.sensors_ready() and waited < MAX_SENSORS_WAIT:
+            self.__world.tick()
+            time.sleep(0.1)
+            waited += 1
+            
         self._update_observation()
         
         # 5. Start the reward function
@@ -194,7 +203,7 @@ class CarlaEnv(gym.Env):
         # 6. Start the timer
         self.__episode_number += 1
         self.__start_timer()
-        print(f"Episode {self.__episode_number} started!")
+        print(f"[Port {self.__port}] Episode {self.__episode_number} started!")
         
         # 7. Make information about the scenario available
         info = {
@@ -204,8 +213,10 @@ class CarlaEnv(gym.Env):
         
         self.number_of_steps = 0
         
+        print(f"[Port {self.__port}] Episode {self.__episode_number} started!")
+        
         # Spawn cones once at the very first episode
-        if self.__episode_number == 1 and not self.__cones_spawned:
+        if self.__spawn_cones and self.__episode_number == 1 and not self.__cones_spawned:
             self.__spawn_all_cones()
         
         # Return the observation and the scenario information
@@ -228,13 +239,22 @@ class CarlaEnv(gym.Env):
                 print("Episode interrupted!")
                 exit(0)
         self.number_of_steps += 1
-        # 1. Control the vehicle
-        self.__control_vehicle(np.array(action))
+        
+        # 1. Add action jitter for exploration (if enabled)
+        action_array = np.array(action)
+        if self.__action_jitter > 0.0:
+            noise = np.random.normal(0, self.__action_jitter, size=action_array.shape)
+            action_array = np.clip(action_array + noise, -1.0, 1.0)
+        
+        # 2. Control the vehicle
+        self.__control_vehicle(action_array)
         # 1.5 Tick the display if it is active
         if self.__show_sensor_data:
             self.display.play_window_tick()
         # 2. Update the observation
         self._update_observation()
+        # 2.5 Update the spectator position to follow the vehicle
+        self.place_spectator_above_vehicle()
         # 3. Calculate the reward
         reward = self.__reward_func.calculate_reward(self.__vehicle, self.__reward_current_pos, self.__reward_target_pos, self.__reward_next_waypoint_pos, self.__reward_speed)
         terminated = self.__reward_func.get_terminated()
@@ -247,10 +267,8 @@ class CarlaEnv(gym.Env):
             self.clean_scenario()
             print("Episode interrupted!")
             exit(0)
-        if self.__truncated or terminated:
-            print(f"Episode ended with reward {self.__reward_func.get_total_ep_reward()}.")
+        if terminated or self.__truncated:
             self.clean_scenario()
-            print("------------------------------------------------------")
         
         # 6. Make information about the scenario available
         info = {
@@ -262,20 +280,16 @@ class CarlaEnv(gym.Env):
 
     # Closes everything, more precisely, destroys the vehicle, along with its sensors, destroys every npc and then destroys the world
     def close(self):
-        # 1. Destroy the vehicle
+        # 1. Destroy the ego vehicle
         self.__vehicle.destroy_vehicle()
-        # 2. Destroy pedestrians and traffic vehicles
-        self.__world.destroy_vehicles()
-        self.__world.destroy_pedestrians()
-        # 3. Destroy traffic cones
-        if self.__cones_spawned:
-            if self.__verbose:
-                print("Destroying traffic cones...")
-            self.__world.destroy_cones()
-            self.__cones_spawned = False
-        # 4. Destroy the world
+        
+        # 2. Destroy all other actors (pedestrians, traffic vehicles, cones) via World
+        if self.__verbose:
+            print("Destroying all actors and cleaning up world...")
         self.__world.destroy_world()
-        # 5. Close the server
+        self.__cones_spawned = False
+        
+        # 3. Close the server if it was automatically initialized
         if self.__automatic_server_initialization:
             CarlaServer.close_server(self.__server_process)
 
@@ -321,36 +335,28 @@ class CarlaEnv(gym.Env):
         self.__active_scenario_dict = scenario_dict
          
         # World
-        # This is a fix to a weird bug that happens when the first town is the same as the default map (comment and run a couple of times to see the bug)
-        if self.__first_episode and self.__active_scenario_dict['map_name'] == self.__world.get_active_map_name():
-            self.__world.reload_map()
+        # REMOVED: Reloading the map here wipes any pre-spawned cones from the training script.
+        # if self.__first_episode and self.__active_scenario_dict['map_name'] == self.__world.get_active_map_name():
+        #     self.__world.reload_map()
         self.__first_episode = False
         
         self.__load_world(scenario_dict['map_name'])
         self.__map = self.__world.update_traffic_map()
         time.sleep(2.0)
-        if self.__verbose:
-            print("World loaded!")
         
         # Weather
         self.__load_weather(scenario_dict['weather_condition'])
-        if self.__verbose:
-            print(self.__world.get_active_weather(), " weather preset loaded!")
         
         # Ego vehicle
         self.__spawn_vehicle(scenario_dict)
         if self.__show_sensor_data:   
             self.display = Display('Ego Vehicle Sensor feed', self.__vehicle)
             self.display.play_window_tick()
-        if self.__verbose:
-            print("Vehicle spawned!")
         
         # Traffic
         if self.__has_traffic:
             self.__spawn_traffic(seed=seed)
             # self.__world.spawn_pedestrians_around_ego(self.__vehicle.get_location(), num_pedestrians=10)
-            if self.__verbose:
-                print("Traffic spawned!")
         self.__toggle_lights()
 
     def clean_scenario(self):
@@ -373,7 +379,7 @@ class CarlaEnv(gym.Env):
         try:
             self.__vehicle.spawn_vehicle(location, rotation)
         except Exception as e:
-            print("Error spawning vehicle! Reloading Map...")
+            print(f"[Port {self.__port}] Error spawning vehicle! Reloading Map...")
             self.__world.reload_map()
             self.load_scenario(self.__active_scenario_name, self.__seed)
     
@@ -469,11 +475,17 @@ class CarlaEnv(gym.Env):
 
         # Generate waypoints along the route with the specified spacing
         waypoints = []
-        while current_waypoint.transform.location.distance(target_waypoint.transform.location) > spacing:
+        max_waypoints = 500 # Safety limit to prevent infinite loops
+        while current_waypoint.transform.location.distance(target_waypoint.transform.location) > spacing and len(waypoints) < max_waypoints:
             waypoints.append(current_waypoint.transform.location)
-            current_waypoint = current_waypoint.next(spacing)[0]
+            next_wps = current_waypoint.next(spacing)
+            if not next_wps:
+                break
+            current_waypoint = next_wps[0]
         
         return waypoints[1:] # Take out the first waypoint because it is the starting point
+        
+
     
     def get_vehicle(self):
         return self.__vehicle

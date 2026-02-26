@@ -1,5 +1,3 @@
-print("environment_cone.py")
-
 import numpy as np
 import math
 import carla

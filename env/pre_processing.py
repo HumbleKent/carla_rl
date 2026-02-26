@@ -33,8 +33,26 @@ class PreProcessing:
             'rgb_data': observation_data['rgb_data'],
             'rest': np.array([target_distance, next_waypoint_distance, speed])
         }
+
+        # Include Semantic Lidar data if available
+        if 'semantic_lidar_data' in observation_data:
+            neo_observation_data['semantic_lidar'] = self.__process_semantic_lidar(observation_data['semantic_lidar_data'])
         
         return neo_observation_data
+
+    # This method extracts features from the semantic lidar data
+    def __process_semantic_lidar(self, semantic_lidar_data):
+        # semantic_lidar_data shape: (1000, 4) -> [x, y, z, label]
+        
+        # Transpose to (4, 1000) - typical format for PointNet (channels first)
+        semantic_lidar_data = semantic_lidar_data.transpose([1, 0])
+        
+        # Sample to 500 points using Farthest Point Sampling for better spatial representation
+        # and consistency with the standard lidar preprocessing
+        sampler = FarthestSampler()
+        sampled_data, _ = sampler.sample(semantic_lidar_data, 500)
+        
+        return np.float32(sampled_data)
 
     # This method extracts the features from the lidar data before feeding it to the policy network
     def __process_lidar(self, lidar_data):

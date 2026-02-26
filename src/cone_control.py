@@ -1,6 +1,8 @@
 import carla
 import numpy as np
 import math
+import json
+import os
 import configuration as config
 
 class ConeControl:
@@ -12,6 +14,27 @@ class ConeControl:
     def update_map(self, map):
         self.__map = map
         
+    def spawn_cones_from_json(self, json_path=config.ENV_CONE_LAYOUT_FILE):
+        """Load cone positions from a JSON file and spawn them."""
+        if not os.path.exists(json_path):
+            if config.VERBOSE:
+                print(f"ERROR: {json_path} not found!")
+            return
+        
+        with open(json_path, 'r') as f:
+            cone_transforms = json.load(f)
+            
+        if config.VERBOSE:
+            print(f"Loading {len(cone_transforms)} cone positions from {json_path}")
+            
+        for cone_data in cone_transforms:
+            # Most JSONs use x, y and sometimes z.
+            self.spawn_single_cone([
+                cone_data['x'], 
+                cone_data['y'], 
+                cone_data.get('z', 0.0)
+            ])
+
     def spawn_cones_at_waypoints(self, waypoint_positions):
         for position in waypoint_positions:
             self.__spawn_single_cone(position)
@@ -105,6 +128,11 @@ class ConeControl:
             print("Destroyed all traffic cones")
     
     def get_active_cones(self):
+        """Get list of traffic cone actors. If internal list is empty, query the world."""
+        if not self.__active_cones:
+            # Query the world for any construction cones that might have been spawned externally
+            all_actors = self.__world.get_actors()
+            self.__active_cones = list(all_actors.filter('static.prop.constructioncone'))
         return self.__active_cones
     
     def get_cone_count(self):

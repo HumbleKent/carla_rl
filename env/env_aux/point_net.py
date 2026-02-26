@@ -124,6 +124,68 @@ class PointNetfeat(nn.Module):
             x = x.view(-1, 1024, 1).repeat(1, 1, n_pts)
             return torch.cat([x, pointfeat], 1), trans, trans_feat
 
+class SemanticPointNetfeat(nn.Module):
+    """
+    Specialized PointNet for Semantic LiDAR (4 channels: X, Y, Z, Label)
+    """
+    def __init__(self, global_feat = True, feature_transform = False):
+        super(SemanticPointNetfeat, self).__init__()
+        # STN3d specifically handles the 3D spatial alignment (XYZ)
+        self.stn = STN3d() 
+        
+        # Conv1d accepts 4 channels (XYZ + Semantic labels)
+        self.conv1 = torch.nn.Conv1d(4, 64, 1)
+        self.conv2 = torch.nn.Conv1d(64, 128, 1)
+        self.conv3 = torch.nn.Conv1d(128, 1024, 1)
+        
+        self.bn1 = nn.BatchNorm1d(64)
+        self.bn2 = nn.BatchNorm1d(128)
+        self.bn3 = nn.BatchNorm1d(1024)
+        
+        self.global_feat = global_feat
+        self.feature_transform = feature_transform
+        if self.feature_transform:
+            self.fstn = STNkd(k=64)
+
+    def forward(self, x):
+        batchsize = x.size()[0]
+        n_pts = x.size()[2]
+        
+        # 1. Spatial Transformation (Only on XYZ - first 3 channels)
+        xyz = x[:, :3, :]
+        trans = self.stn(xyz)
+        xyz = xyz.transpose(2, 1)
+        xyz = torch.bmm(xyz, trans)
+        xyz = xyz.transpose(2, 1)
+        
+        # 2. Re-attach the Semantic labels (4th channel) to the transformed XYZ
+        labels = x[:, 3:, :]
+        x = torch.cat([xyz, labels], dim=1)
+
+        # 3. Process the semantic-spatial features
+        x = F.relu(self.bn1(self.conv1(x)))
+
+        if self.feature_transform:
+            trans_feat = self.fstn(x)
+            x = x.transpose(2,1)
+            x = torch.bmm(x, trans_feat)
+            x = x.transpose(2,1)
+        else:
+            trans_feat = None
+
+        pointfeat = x
+        x = F.relu(self.bn2(self.conv2(x)))
+        x = self.bn3(self.conv3(x))
+        x = torch.max(x, 2, keepdim=True)[0]
+        x = x.view(-1, 1024)
+        
+        if self.global_feat:
+            # Result: 1,024 features encoding both shape AND semantic identity
+            return x, trans, trans_feat
+        else:
+            x = x.view(-1, 1024, 1).repeat(1, 1, n_pts)
+            return torch.cat([x, pointfeat], 1), trans, trans_feat
+
 def feature_transform_regularizer(trans):
     d = trans.size()[1]
     batchsize = trans.size()[0]

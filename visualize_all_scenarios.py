@@ -23,35 +23,49 @@ try:
 except ImportError:
     HAS_PYNPUT = False
 
-def find_scenario_centers(cone_transforms):
-    """Find approximate centers of each scenario by clustering cone positions"""
-    if not cone_transforms:
-        return []
+def parse_scenarios_from_json(cone_transforms):
+    """Group cones into scenarios based on the '_scenario' tag in the data."""
+    scenario_groups = []
+    current_group = None
     
-    # Convert to numpy array
-    positions = np.array([[c['x'], c['y']] for c in cone_transforms])
-    
-    # Simple clustering - find groups of cones
-    scenario_centers = []
-    scenario_cones = []
-    used_indices = set()
-    
-    for i, pos in enumerate(positions):
-        if i in used_indices:
-            continue
+    for cone in cone_transforms:
+        # Check if this cone marks the start of a new scenario
+        if "_scenario" in cone:
+            if current_group:
+                scenario_groups.append(current_group)
+            
+            current_group = {
+                "name": cone["_scenario"],
+                "cones": []
+            }
         
-        # Find all cones within 100m radius
-        distances = np.sqrt(np.sum((positions - pos) ** 2, axis=1))
-        cluster_indices = np.where(distances < 100)[0]
-        
-        if len(cluster_indices) > 5:  # Only consider if cluster has enough cones
-            cluster_positions = positions[cluster_indices]
-            center = np.mean(cluster_positions, axis=0)
-            scenario_centers.append(center)
-            scenario_cones.append(len(cluster_indices))
-            used_indices.update(cluster_indices)
+        # If we have an active group, add the cone coordinates
+        if current_group:
+            current_group["cones"].append(cone)
+            
+    # Add the last group
+    if current_group:
+        scenario_groups.append(current_group)
     
-    return scenario_centers, scenario_cones
+    # Extract names, centers (average x,y), and counts
+    names = []
+    centers = []
+    counts = []
+    
+    for group in scenario_groups:
+        names.append(group["name"])
+        cones = group["cones"]
+        count = len(cones)
+        counts.append(count)
+        
+        if count > 0:
+            avg_x = sum(c['x'] for c in cones) / count
+            avg_y = sum(c['y'] for c in cones) / count
+            centers.append((avg_x, avg_y))
+        else:
+            centers.append((0.0, 0.0))
+            
+    return names, centers, counts
 
 class ScenarioViewer:
     def __init__(self):
@@ -68,9 +82,6 @@ class ScenarioViewer:
             elif key == keyboard.Key.left or key == keyboard.Key.up:
                 self.current_idx -= 1
                 self.should_update = True
-            elif key == keyboard.Key.esc:
-                self.running = False
-                return False  # Stop listener
         except AttributeError:
             pass
 
@@ -103,24 +114,13 @@ def spectator_manual_control():
         
         print(f"✓ Loaded {len(cone_transforms)} cone positions\n")
         
-        # Find scenario centers
-        print("Analyzing cone clusters...")
-        scenario_centers, scenario_cones = find_scenario_centers(cone_transforms)
+        # Parse scenarios from tags
+        print("Parsing scenarios from metadata...")
+        scenario_names, scenario_centers, scenario_cones = parse_scenarios_from_json(cone_transforms)
         print(f"✓ Found {len(scenario_centers)} scenarios\n")
         
-        # Display scenario info
-        scenario_names = [
-            "Lane Closure (sudden squeeze)",
-            "Pothole Repair Zones",
-            "Tight Chicane",
-            "Incomplete Barrier",
-            "Sudden Lane Diversion",
-            "Lane Change Avoidance"
-        ]
-        
         print("Scenarios detected:")
-        for i, (center, num_cones) in enumerate(zip(scenario_centers, scenario_cones)):
-            name = scenario_names[i] if i < len(scenario_names) else f"Scenario {i+1}"
+        for i, (name, center, num_cones) in enumerate(zip(scenario_names, scenario_centers, scenario_cones)):
             print(f"  {i+1}. {name}")
             print(f"     Location: ({center[0]:.1f}, {center[1]:.1f}) | {num_cones} cones")
         print()
@@ -131,8 +131,8 @@ def spectator_manual_control():
         
         for cone_data in cone_transforms:
             transform = carla.Transform(
-                carla.Location(x=cone_data['x'], y=cone_data['y'], z=cone_data['z']),
-                carla.Rotation(pitch=cone_data['pitch'], yaw=cone_data['yaw'], roll=cone_data['roll'])
+                carla.Location(x=cone_data['x'], y=cone_data['y'], z=0.0),
+                carla.Rotation(pitch=0.0, yaw=0.0, roll=0.0)
             )
             
             actor = world.spawn_actor(cone_bp, transform)

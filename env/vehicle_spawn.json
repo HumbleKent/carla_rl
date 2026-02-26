@@ -1,468 +1,84 @@
 {
-    "ConeTrack-0-DirA": {
+    "Pothole Repair Zones": {
         "map_name": "Town05",
         "weather_condition": "Clear Noon",
         "initial_position": {
-            "x": -113.63923753250106,
-            "y": -144.5036249317143,
+            "x": -23.38,
+            "y": 6.25,
             "z": 0.3
         },
         "initial_rotation": {
             "pitch": 0.0,
-            "yaw": 30.70966456539437,
+            "yaw": 1.67,
             "roll": 0.0
         },
         "target_position": {
-            "x": -9.592282166595629,
-            "y": -82.70132349357867,
+            "x": -1.06,
+            "y": 6.05,
             "z": 0.3
-        },
-        "target_gnss": {
-            "lat": 0.0,
-            "lon": 0.0,
-            "alt": 0
         },
         "traffic_density": "None",
         "situation": "Road"
     },
-    "ConeTrack-0-DirB": {
+    "Lane Change 1": {
         "map_name": "Town05",
         "weather_condition": "Clear Noon",
         "initial_position": {
-            "x": -9.592282166595629,
-            "y": -82.70132349357867,
+            "x": 35.37,
+            "y": 73.60,
             "z": 0.3
         },
         "initial_rotation": {
             "pitch": 0.0,
-            "yaw": -149.29033543460565,
+            "yaw": -90.21,
             "roll": 0.0
         },
         "target_position": {
-            "x": -113.63923753250106,
-            "y": -144.5036249317143,
+            "x": 35.05,
+            "y": 21.86,
             "z": 0.3
-        },
-        "target_gnss": {
-            "lat": 0.0,
-            "lon": 0.0,
-            "alt": 0
         },
         "traffic_density": "None",
         "situation": "Road"
     },
-    "ConeTrack-1-DirA": {
+    " Lane Change 2": {
         "map_name": "Town05",
         "weather_condition": "Clear Noon",
         "initial_position": {
-            "x": 87.08360557722266,
-            "y": 207.36656610306605,
+            "x": 31.56,
+            "y": -21.76,
             "z": 0.3
         },
         "initial_rotation": {
             "pitch": 0.0,
-            "yaw": 174.83136690712143,
+            "yaw": -86.93,
             "roll": 0.0
         },
         "target_position": {
-            "x": 52.819932173021485,
-            "y": 210.4658923930277,
+            "x": 32.80,
+            "y": -70.28,
             "z": 0.3
-        },
-        "target_gnss": {
-            "lat": 0.0,
-            "lon": 0.0,
-            "alt": 0
         },
         "traffic_density": "None",
         "situation": "Road"
     },
-    "ConeTrack-1-DirB": {
+    "Lane Closure (sudden squeeze)": {
         "map_name": "Town05",
         "weather_condition": "Clear Noon",
         "initial_position": {
-            "x": 52.819932173021485,
-            "y": 210.4658923930277,
+            "x": -107.11,
+            "y": -138.74,
             "z": 0.3
         },
         "initial_rotation": {
             "pitch": 0.0,
-            "yaw": -5.168633092878569,
+            "yaw": 4.48,
             "roll": 0.0
         },
         "target_position": {
-            "x": 87.08360557722266,
-            "y": 207.36656610306605,
+            "x": -13.54,
+            "y": -87.93,
             "z": 0.3
-        },
-        "target_gnss": {
-            "lat": 0.0,
-            "lon": 0.0,
-            "alt": 0
-        },
-        "traffic_density": "None",
-        "situation": "Road"
-    },
-    "ConeTrack-5-DirA": {
-        "map_name": "Town05",
-        "weather_condition": "Clear Noon",
-        "initial_position": {
-            "x": 212.11882850092454,
-            "y": -9.940186704940814,
-            "z": 0.3
-        },
-        "initial_rotation": {
-            "pitch": 0.0,
-            "yaw": -92.29988268778857,
-            "roll": 0.0
-        },
-        "target_position": {
-            "x": 208.11290672856765,
-            "y": -109.6840236527252,
-            "z": 0.3
-        },
-        "target_gnss": {
-            "lat": 0.0,
-            "lon": 0.0,
-            "alt": 0
-        },
-        "traffic_density": "None",
-        "situation": "Road"
-    },
-    "ConeTrack-5-DirB": {
-        "map_name": "Town05",
-        "weather_condition": "Clear Noon",
-        "initial_position": {
-            "x": 208.11290672856765,
-            "y": -109.6840236527252,
-            "z": 0.3
-        },
-        "initial_rotation": {
-            "pitch": 0.0,
-            "yaw": 87.70011731221143,
-            "roll": 0.0
-        },
-        "target_position": {
-            "x": 212.11882850092454,
-            "y": -9.940186704940814,
-            "z": 0.3
-        },
-        "target_gnss": {
-            "lat": 0.0,
-            "lon": 0.0,
-            "alt": 0
-        },
-        "traffic_density": "None",
-        "situation": "Road"
-    },
-    "ConeTrack-6-DirA": {
-        "map_name": "Town05",
-        "weather_condition": "Clear Noon",
-        "initial_position": {
-            "x": -120.78844151955408,
-            "y": 53.301236272990124,
-            "z": 0.3
-        },
-        "initial_rotation": {
-            "pitch": 0.0,
-            "yaw": 135.0255985788414,
-            "roll": 0.0
-        },
-        "target_position": {
-            "x": -162.3160735561295,
-            "y": 94.79177749043761,
-            "z": 0.3
-        },
-        "target_gnss": {
-            "lat": 0.0,
-            "lon": 0.0,
-            "alt": 0
-        },
-        "traffic_density": "None",
-        "situation": "Road"
-    },
-    "ConeTrack-6-DirB": {
-        "map_name": "Town05",
-        "weather_condition": "Clear Noon",
-        "initial_position": {
-            "x": -162.3160735561295,
-            "y": 94.79177749043761,
-            "z": 0.3
-        },
-        "initial_rotation": {
-            "pitch": 0.0,
-            "yaw": -44.9744014211586,
-            "roll": 0.0
-        },
-        "target_position": {
-            "x": -120.78844151955408,
-            "y": 53.301236272990124,
-            "z": 0.3
-        },
-        "target_gnss": {
-            "lat": 0.0,
-            "lon": 0.0,
-            "alt": 0
-        },
-        "traffic_density": "None",
-        "situation": "Road"
-    },
-    "ConeTrack-10-DirA": {
-        "map_name": "Town05",
-        "weather_condition": "Clear Noon",
-        "initial_position": {
-            "x": 73.11212778900538,
-            "y": -202.33159556011375,
-            "z": 0.3
-        },
-        "initial_rotation": {
-            "pitch": 0.0,
-            "yaw": -177.15194395678293,
-            "roll": 0.0
-        },
-        "target_position": {
-            "x": -33.40020991180811,
-            "y": -207.63047109027687,
-            "z": 0.3
-        },
-        "target_gnss": {
-            "lat": 0.0,
-            "lon": 0.0,
-            "alt": 0
-        },
-        "traffic_density": "None",
-        "situation": "Road"
-    },
-    "ConeTrack-10-DirB": {
-        "map_name": "Town05",
-        "weather_condition": "Clear Noon",
-        "initial_position": {
-            "x": -33.40020991180811,
-            "y": -207.63047109027687,
-            "z": 0.3
-        },
-        "initial_rotation": {
-            "pitch": 0.0,
-            "yaw": 2.8480560432170896,
-            "roll": 0.0
-        },
-        "target_position": {
-            "x": 73.11212778900538,
-            "y": -202.33159556011375,
-            "z": 0.3
-        },
-        "target_gnss": {
-            "lat": 0.0,
-            "lon": 0.0,
-            "alt": 0
-        },
-        "traffic_density": "None",
-        "situation": "Road"
-    },
-    "ConeTrack-11-DirA": {
-        "map_name": "Town05",
-        "weather_condition": "Clear Noon",
-        "initial_position": {
-            "x": 1.3223257729371225,
-            "y": -8.378955847718897,
-            "z": 0.3
-        },
-        "initial_rotation": {
-            "pitch": 0.0,
-            "yaw": 130.99838956188876,
-            "roll": 0.0
-        },
-        "target_position": {
-            "x": -11.613311834033315,
-            "y": 6.502637750604334,
-            "z": 0.3
-        },
-        "target_gnss": {
-            "lat": 0.0,
-            "lon": 0.0,
-            "alt": 0
-        },
-        "traffic_density": "None",
-        "situation": "Road"
-    },
-    "ConeTrack-11-DirB": {
-        "map_name": "Town05",
-        "weather_condition": "Clear Noon",
-        "initial_position": {
-            "x": -11.613311834033315,
-            "y": 6.502637750604334,
-            "z": 0.3
-        },
-        "initial_rotation": {
-            "pitch": 0.0,
-            "yaw": -49.00161043811124,
-            "roll": 0.0
-        },
-        "target_position": {
-            "x": 1.3223257729371225,
-            "y": -8.378955847718897,
-            "z": 0.3
-        },
-        "target_gnss": {
-            "lat": 0.0,
-            "lon": 0.0,
-            "alt": 0
-        },
-        "traffic_density": "None",
-        "situation": "Road"
-    },
-    "ConeTrack-12-DirA": {
-        "map_name": "Town05",
-        "weather_condition": "Clear Noon",
-        "initial_position": {
-            "x": -20.206478416067714,
-            "y": 3.6052071591220716,
-            "z": 0.3
-        },
-        "initial_rotation": {
-            "pitch": 0.0,
-            "yaw": -157.28841503833033,
-            "roll": 0.0
-        },
-        "target_position": {
-            "x": -37.626300514596345,
-            "y": -3.6858011623226026,
-            "z": 0.3
-        },
-        "target_gnss": {
-            "lat": 0.0,
-            "lon": 0.0,
-            "alt": 0
-        },
-        "traffic_density": "None",
-        "situation": "Road"
-    },
-    "ConeTrack-12-DirB": {
-        "map_name": "Town05",
-        "weather_condition": "Clear Noon",
-        "initial_position": {
-            "x": -37.626300514596345,
-            "y": -3.6858011623226026,
-            "z": 0.3
-        },
-        "initial_rotation": {
-            "pitch": 0.0,
-            "yaw": 22.711584961669693,
-            "roll": 0.0
-        },
-        "target_position": {
-            "x": -20.206478416067714,
-            "y": 3.6052071591220716,
-            "z": 0.3
-        },
-        "target_gnss": {
-            "lat": 0.0,
-            "lon": 0.0,
-            "alt": 0
-        },
-        "traffic_density": "None",
-        "situation": "Road"
-    },
-    "ConeTrack-13-DirA": {
-        "map_name": "Town05",
-        "weather_condition": "Clear Noon",
-        "initial_position": {
-            "x": -63.2676702137241,
-            "y": 8.476413507219387,
-            "z": 0.3
-        },
-        "initial_rotation": {
-            "pitch": 0.0,
-            "yaw": -79.91957870399071,
-            "roll": 0.0
-        },
-        "target_position": {
-            "x": -59.96919959828762,
-            "y": -10.077815730329586,
-            "z": 0.3
-        },
-        "target_gnss": {
-            "lat": 0.0,
-            "lon": 0.0,
-            "alt": 0
-        },
-        "traffic_density": "None",
-        "situation": "Road"
-    },
-    "ConeTrack-13-DirB": {
-        "map_name": "Town05",
-        "weather_condition": "Clear Noon",
-        "initial_position": {
-            "x": -59.96919959828762,
-            "y": -10.077815730329586,
-            "z": 0.3
-        },
-        "initial_rotation": {
-            "pitch": 0.0,
-            "yaw": 100.08042129600929,
-            "roll": 0.0
-        },
-        "target_position": {
-            "x": -63.2676702137241,
-            "y": 8.476413507219387,
-            "z": 0.3
-        },
-        "target_gnss": {
-            "lat": 0.0,
-            "lon": 0.0,
-            "alt": 0
-        },
-        "traffic_density": "None",
-        "situation": "Road"
-    },
-    "ConeTrack-14-DirA": {
-        "map_name": "Town05",
-        "weather_condition": "Clear Noon",
-        "initial_position": {
-            "x": -81.13543095060172,
-            "y": -8.73139436750593,
-            "z": 0.3
-        },
-        "initial_rotation": {
-            "pitch": 0.0,
-            "yaw": 124.54767231485425,
-            "roll": 0.0
-        },
-        "target_position": {
-            "x": -92.13995967439828,
-            "y": 7.251788454343698,
-            "z": 0.3
-        },
-        "target_gnss": {
-            "lat": 0.0,
-            "lon": 0.0,
-            "alt": 0
-        },
-        "traffic_density": "None",
-        "situation": "Road"
-    },
-    "ConeTrack-14-DirB": {
-        "map_name": "Town05",
-        "weather_condition": "Clear Noon",
-        "initial_position": {
-            "x": -92.13995967439828,
-            "y": 7.251788454343698,
-            "z": 0.3
-        },
-        "initial_rotation": {
-            "pitch": 0.0,
-            "yaw": -55.45232768514577,
-            "roll": 0.0
-        },
-        "target_position": {
-            "x": -81.13543095060172,
-            "y": -8.73139436750593,
-            "z": 0.3
-        },
-        "target_gnss": {
-            "lat": 0.0,
-            "lon": 0.0,
-            "alt": 0
         },
         "traffic_density": "None",
         "situation": "Road"
