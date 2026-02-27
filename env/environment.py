@@ -1,64 +1,41 @@
-'''
-Environment class for the carla environment.
-
-It is a wrapper around the carla environment, and it is used to interact with the environment in a more convenient way.
-
-It implements the following methods:
- - reset: resets the environment and returns the initial state
- - step: takes an action and returns the next state, the reward, a flag indicating if the episode is done, and a dictionary with extra information
- - close: closes the environment
-
-Observation Space:
-    [RGB image, LiDAR point cloud, Current position, Target position, Current situation]
-
-    The current situation cannot be a string therefore it was converted to a numerical value using a dictionary to map the string to a number
-
-    Dict:{
-        Road:       0,
-        Roundabout: 1,
-        Junction:   2,
-        Tunnel:     3,
-    }
-
-Action Space:
-    Continuous:from gymnasium import spaces
-        [Steering (-1.0, 1.0), Throttle/Brake (-1.0, 1.0)]
-    Discrete:
-        [Action] (0: Accelerate, 1: Decelerate, 2: Left, 3: Right) <- It's a number from 0 to 3
-
-'''
-
 import numpy as np
 import json
 import time
 import random
+import math
 import carla
-
 import gymnasium as gym
 from gymnasium.envs.registration import register
 import configuration as config
-
-register(
-    id="carla-rl-gym-v0", # name-version
-    entry_point="env.environment:CarlaEnv",
-    max_episode_steps=config.ENV_MAX_STEPS,
-)
 
 from src.world import World
 from src.server import CarlaServer
 from src.vehicle import Vehicle
 from src.display import Display
 from env.reward import Reward
-import env.observation_action_space
+from env.observation_action_space import (
+    observation_space, 
+    action_space, 
+    situations_map
+)
 from env.pre_processing import PreProcessing
 
-# Name: 'carla-rl-gym-v0'
+register(
+    id="carla-rl-gym-v0",
+    entry_point="env.environment:CarlaEnv",
+    max_episode_steps=config.ENV_MAX_STEPS,
+)
+
+# Unified Environment for CARLA Training
 class CarlaEnv(gym.Env):
     metadata = {"render_modes": ["human"], "render_fps": config.SIM_FPS}
-    def __init__(self, continuous=True, scenarios=[], time_limit=60, initialize_server=True, random_weather=False, random_traffic=False, synchronous_mode=True, show_sensor_data=False, has_traffic=True, verbose=True, spawn_cones=True, port=None, action_jitter=0.0):
+    
+    def __init__(self, scenarios=[], time_limit=60, initialize_server=False, 
+                 random_weather=False, random_traffic=False, synchronous_mode=True, 
+                 show_sensor_data=False, has_traffic=True, verbose=True, 
+                 spawn_cones=True, port=None, action_jitter=0.0):
         super().__init__()
-        # Read the environment settings
-        self.__is_continuous = continuous
+        
         self.__port = port if port is not None else config.SIM_PORT
         self.__random_weather = random_weather
         self.__random_traffic = random_traffic
@@ -67,284 +44,231 @@ class CarlaEnv(gym.Env):
         self.__has_traffic = has_traffic
         self.__verbose = verbose
         self.__automatic_server_initialization = initialize_server
-        self.__cones_spawned = False  # Track if cones have been spawned
-        self.__spawn_cones = spawn_cones # Flag to control cone spawning
-        self.__action_jitter = action_jitter  # Noise level for action exploration
+        self.__cones_spawned = False
+        self.__spawn_cones = spawn_cones 
+        self.__action_jitter = action_jitter
 
-        # 1. Start the server
+        # 1. Server initialization
         if self.__automatic_server_initialization:
-            self.__server_process = CarlaServer.initialize_server(low_quality = config.SIM_LOW_QUALITY, offscreen_rendering = config.SIM_OFFSCREEN_RENDERING)
+            self.__server_process = CarlaServer.initialize_server(
+                low_quality=config.SIM_LOW_QUALITY, 
+                offscreen_rendering=config.SIM_OFFSCREEN_RENDERING
+            )
         
-        # 2. Connect to the server
+        # 2. Setup World, Vehicle, and Processing
         self.__world = World(synchronous_mode=self.__synchronous_mode, port=self.__port)
-        # 3. Read the flag and get the appropriate situations
         self.__get_situations(scenarios)
-        # 4. Create the vehicle
         self.__vehicle = Vehicle(self.__world.get_world())
-
-        # 5. Observation space:
-        self.observation_space = env.observation_action_space.observation_space
-        self.__observation = None
         self.pre_processing = PreProcessing()
-
-        # 6: Action space
-        if self.__is_continuous:
-            # For continuous actions
-            self.action_space = env.observation_action_space.continuous_action_space
-        else:
-            # For discrete actions
-            self.action_space = env.observation_action_space.discrete_action_space
+        self.__reward_func = Reward()
         
-        # Truncated flag
-        self.__time_limit = time_limit
-        self.__time_limit_reached = False
-        self.__truncated = False  # Used for an episode that was terminated due to a time limit or errors
-
-        # Variables to store the current state
+        # 3. Spaces
+        self.observation_space = observation_space
+        self.action_space = action_space
+        
+        # 4. State variables
         self.__active_scenario_name = None
         self.__active_scenario_dict = None
-        self.__waypoints = None # List of waypoints to the target
-        self.__situations_map = env.observation_action_space.situations_map
-        self.__reward_func = Reward()
-
-        # Auxiliar variables
-        self.__first_episode = True
+        self.__waypoints = None
+        self.__situations_map = situations_map
         self.__episode_number = 0
-        self.__restart_every = 5000 # Restart the server every n episodes so it doesn't crash
+        self.__time_limit = time_limit
+        self.__truncated = False
+        self.last_action = np.array([0.0, 0.0], dtype=np.float32)
+        self.current_cone_data = []
+        self.num_cones_to_track = 5
         
-        # Load cone configuration
         self.__cone_config = self.__load_cone_config()
-        
+
     def __load_cone_config(self):
-        """Load traffic cone configuration from JSON file."""
         try:
-            with open('env/cone_layout.json', 'r') as f:
+            with open(config.ENV_CONE_LAYOUT_FILE, 'r') as f:
                 return json.load(f)
-        except FileNotFoundError:
-            if self.__verbose:
-                print("Warning: cone_layout.json not found. No cones will be spawned.")
+        except:
             return None
-        except Exception as e:
-            if self.__verbose:
-                print(f"Error loading cone config: {e}")
-            return None
-    
-    def __spawn_all_cones(self):
-        """Spawn all traffic cones from configuration. Called once at first episode."""
-        if self.__cones_spawned or self.__cone_config is None:
-            return
-            
-        if self.__verbose:
-            print("Spawning traffic cones from cone_layout.json...")
-        
-        # cone_layout.json is a flat list of cone transforms
-        if isinstance(self.__cone_config, list):
-            total_cones = 0
-            for cone_data in self.__cone_config:
-                try:
-                    # Extract position
-                    position = {
-                        'x': cone_data['x'],
-                        'y': cone_data['y'],
-                        'z': cone_data.get('z', 0.0)
-                    }
-                    # Spawn cone
-                    self.__world.spawn_cones_from_positions([position])
-                    total_cones += 1
-                except Exception as e:
-                    if self.__verbose:
-                        print(f"Failed to spawn cone at ({cone_data.get('x', 0)}, {cone_data.get('y', 0)}): {e}")
-        
-            self.__cones_spawned = True
-            
-            # Tick the world so clones are registered in the state
-            self.__world.tick()
-        
-    # ===================================================== GYM METHODS =====================================================                
-    # This reset loads a random scenario and returns the initial state plus information about the scenario
-    # Options may include the name of the scenario to load    
+
     def reset(self, seed=None, options=None):
-        # 1. Choose a scenario
-        if options is not None and 'scenario_name' in options and options['scenario_name'] is not None:
+        self.last_action = np.array([0.0, 0.0], dtype=np.float32)
+        
+        # Select Scenario
+        if options and 'scenario_name' in options:
             self.__active_scenario_name = options['scenario_name']
         else:
             self.__active_scenario_name = self.__chose_situation(seed)
         
-        # 2. Load the scenario
-        print(f"[Port {self.__port}] Loading scenario {self.__active_scenario_name}...")
-        try:
-            self.load_scenario(self.__active_scenario_name, seed)
-        except KeyboardInterrupt as e:
-            self.clean_scenario()
-            print("Scenario loading interrupted!")
-            exit(0)        
-
-        # self.__world.tick()
-        # 3. Place the spectator
+        if self.__verbose:
+            print(f"[Port {self.__port}] Loading scenario {self.__active_scenario_name}...")
+            
+        self.load_scenario(self.__active_scenario_name, seed)
         self.place_spectator_above_vehicle()
         
-        # 4. Get list of waypoints to the target from the starting position
+        # Pathfinding
         self.__waypoints = self.get_path_waypoints(spacing=config.ENV_WAYPOINT_SPACING)
-
-        # Turn each waypoint into a list of 3 elements
         self.__waypoints = [np.array([w.x, w.y, w.z]) for w in self.__waypoints]
         
-        # 4. Get the initial state (Get the observation data)
-        # Wait for sensors to be ready
-        MAX_SENSORS_WAIT = 50 # 5 seconds
+        # Wait for sensors
         waited = 0
-        while not self.__vehicle.sensors_ready() and waited < MAX_SENSORS_WAIT:
+        while not self.__vehicle.sensors_ready() and waited < 50:
             self.__world.tick()
             time.sleep(0.1)
             waited += 1
             
         self._update_observation()
-        
-        # 5. Start the reward function
         self.__reward_func.reset(self.__waypoints)
-        
-        # 6. Start the timer
         self.__episode_number += 1
         self.__start_timer()
-        print(f"[Port {self.__port}] Episode {self.__episode_number} started!")
-        
-        # 7. Make information about the scenario available
-        info = {
-            'scenario_name': self.__active_scenario_name,
-            'waypoints': self.__waypoints,
-        }
-        
         self.number_of_steps = 0
         
-        print(f"[Port {self.__port}] Episode {self.__episode_number} started!")
-        
-        # Spawn cones once at the very first episode
-        if self.__spawn_cones and self.__episode_number == 1 and not self.__cones_spawned:
+        # Spawn cones AFTER potential map reloads in load_scenario
+        if self.__spawn_cones:
             self.__spawn_all_cones()
-        
-        # Return the observation and the scenario information
+            
+        info = {'scenario_name': self.__active_scenario_name, 'waypoints': self.__waypoints}
         return self.__observation, info
-    
+
     def render(self, mode='human'):
         if mode == 'human':
             self.__world.tick()
-            self.display.play_window_tick()
+            if hasattr(self, 'display'):
+                self.display.play_window_tick()
         else:
             raise NotImplementedError("This mode is not implemented yet")
 
     def step(self, action):
-        # 0. Tick the world if in synchronous mode
         if self.__synchronous_mode:
-            try:
-                self.__world.tick()
-            except KeyboardInterrupt:
-                self.clean_scenario()
-                print("Episode interrupted!")
-                exit(0)
+            self.__world.tick()
+            
+        # Self-healing: Ensure cones haven't been wiped mid-episode by a parallel process
+        if self.__spawn_cones and self.__episode_number > 0 and self.number_of_steps % 10 == 0:
+            if self.__world.get_cone_count() == 0 and self.__cone_config is not None:
+                if self.__verbose: print(f"[Port {self.__port}] Cones disappeared mid-episode! Respawning...")
+                self.__spawn_all_cones()
+
         self.number_of_steps += 1
         
-        # 1. Add action jitter for exploration (if enabled)
+        # Control
         action_array = np.array(action)
         if self.__action_jitter > 0.0:
             noise = np.random.normal(0, self.__action_jitter, size=action_array.shape)
             action_array = np.clip(action_array + noise, -1.0, 1.0)
         
-        # 2. Control the vehicle
-        self.__control_vehicle(action_array)
-        # 1.5 Tick the display if it is active
-        if self.__show_sensor_data:
-            self.display.play_window_tick()
-        # 2. Update the observation
+        self.__vehicle.control_vehicle(action_array)
+
+        # Update
         self._update_observation()
-        # 2.5 Update the spectator position to follow the vehicle
         self.place_spectator_above_vehicle()
-        # 3. Calculate the reward
-        reward = self.__reward_func.calculate_reward(self.__vehicle, self.__reward_current_pos, self.__reward_target_pos, self.__reward_next_waypoint_pos, self.__reward_speed)
+        
+        # Reward
+        reward = self.__reward_func.calculate_reward(
+            self.__vehicle, 
+            self.__reward_current_pos, 
+            self.__reward_target_pos, 
+            self.__reward_next_waypoint_pos, 
+            self.__reward_speed,
+            cone_data=self.current_cone_data
+        )
+        
         terminated = self.__reward_func.get_terminated()
         self.__waypoints = self.__reward_func.get_waypoints()
         
-        # 5. Check if the episode is truncated
-        try:
-            self.__truncated = self.__timer_truncated()
-        except KeyboardInterrupt:
-            self.clean_scenario()
-            print("Episode interrupted!")
-            exit(0)
+        self.__truncated = (time.time() - self.start_time > self.__time_limit)
+        
         if terminated or self.__truncated:
             self.clean_scenario()
         
-        # 6. Make information about the scenario available
-        info = {
-            'scenario_name': self.__active_scenario_name,
-            'waypoints': self.__waypoints,
-        }
+        self.last_action = np.array(action, dtype=np.float32)
+        info = {'scenario_name': self.__active_scenario_name, 'waypoints': self.__waypoints}
         
         return self.__observation, reward, terminated, self.__truncated, info
 
-    # Closes everything, more precisely, destroys the vehicle, along with its sensors, destroys every npc and then destroys the world
-    def close(self):
-        # 1. Destroy the ego vehicle
-        self.__vehicle.destroy_vehicle()
-        
-        # 2. Destroy all other actors (pedestrians, traffic vehicles, cones) via World
-        if self.__verbose:
-            print("Destroying all actors and cleaning up world...")
-        self.__world.destroy_world()
-        self.__cones_spawned = False
-        
-        # 3. Close the server if it was automatically initialized
-        if self.__automatic_server_initialization:
-            CarlaServer.close_server(self.__server_process)
-
-
-    # ===================================================== OBSERVATION/ACTION METHODS =====================================================
-    def _update_observation(self):        
-        observation_space = self.__vehicle.get_observation_data()
-        rgb_image = observation_space['rgb_data']
-        vehicle_loc = self.__vehicle.get_location()
+    def _update_observation(self):
+        obs_dict = self.__vehicle.get_observation_data()
+        if 'rgb_data' not in obs_dict: return
+            
+        rgb_image = obs_dict['rgb_data']
+        vehicle_actor = self.__vehicle.get_vehicle()
+        if vehicle_actor is None: return
+            
+        vehicle_loc = vehicle_actor.get_location()
         current_position = np.array([vehicle_loc.x, vehicle_loc.y, vehicle_loc.z])
-        target_position = np.array([self.__active_scenario_dict['target_position']['x'], self.__active_scenario_dict['target_position']['y'], self.__active_scenario_dict['target_position']['z']])
-        next_waypoint_position = np.array([self.__waypoints[0][0], self.__waypoints[0][1], self.__waypoints[0][2]])
-        speed = np.array([self.__vehicle.get_speed()])
-        situation = self.__situations_map[self.__active_scenario_dict['situation']]
+        target_position = np.array([
+            self.__active_scenario_dict['target_position']['x'], 
+            self.__active_scenario_dict['target_position']['y'], 
+            self.__active_scenario_dict['target_position']['z']
+        ])
+        
+        if self.__waypoints and len(self.__waypoints) > 0:
+            next_waypoint_position = self.__waypoints[0]
+        else:
+            next_waypoint_position = target_position
 
-        observation = {
+        velocity = vehicle_actor.get_velocity()
+        ang_vel = vehicle_actor.get_angular_velocity()
+        transform = vehicle_actor.get_transform()
+        
+        # Raw Data for Processing
+        raw_obs = {
             'rgb_data': np.uint8(rgb_image),
-            'position': np.float32(current_position),
-            'target_position': np.float32(target_position),
-            'next_waypoint_position': np.float32(next_waypoint_position),
-            'speed': np.float32(speed),
-            'situation': situation
+            'position': current_position,
+            'target_position': target_position,
+            'next_waypoint_position': next_waypoint_position,
+            'velocity': np.array([velocity.x, velocity.y, velocity.z], dtype=np.float32),
+            'angular_velocity': np.array([ang_vel.x, ang_vel.y, ang_vel.z], dtype=np.float32),
+            'rotation': np.array([transform.rotation.pitch, transform.rotation.yaw, transform.rotation.roll], dtype=np.float32)
         }
         
-        self.__observation = self.pre_processing.preprocess_data(observation)
+        # Cone Detection
+        active_cones = self.__world.get_active_cones()
+        self.current_cone_data = []
+        if active_cones:
+            cones_with_dist = []
+            for cone in active_cones:
+                if not cone.is_alive: continue
+                dist = vehicle_loc.distance(cone.get_location())
+                cones_with_dist.append((cone, dist))
+            
+            cones_with_dist.sort(key=lambda x: x[1])
+            for cone, dist in cones_with_dist[:self.num_cones_to_track]:
+                loc = cone.get_location()
+                self.current_cone_data.append({
+                    'rel_x': loc.x - vehicle_loc.x, 
+                    'rel_y': loc.y - vehicle_loc.y, 
+                    'dist': dist
+                })
         
-        # Aux variables for the reward function so the information that is given to the ego vehicle and to the reward function is the same no matter what happens
+        # Processed Observation
+        self.__observation = self.pre_processing.preprocess_data(
+            raw_obs, 
+            cone_data=self.current_cone_data, 
+            last_action=self.last_action
+        )
+        
+        # Reward Aux
         self.__reward_target_pos = target_position
         self.__reward_current_pos = current_position
         self.__reward_next_waypoint_pos = next_waypoint_position
-        self.__reward_speed = speed[0]
+        self.__reward_speed = 3.6 * velocity.length()
 
-    # ===================================================== SCENARIO METHODS =====================================================
+    def close(self):
+        self.__vehicle.destroy_vehicle()
+        self.__world.destroy_vehicles()
+        self.__world.destroy_pedestrians()
+        if self.__automatic_server_initialization:
+            CarlaServer.close_server(self.__server_process)
+
+    # --- Scenario & World Helpers ---
     def load_scenario(self, scenario_name, seed=None):
         try:
             scenario_dict = self.situations_dict[scenario_name]
-        except KeyError:
-            new_name = self.__choose_random_situation(seed)
-            scenario_dict = self.situations_dict[new_name]
-            print(f"Scenario {scenario_name} not found! Loading random scenario {new_name}...")
+        except:
+            scenario_name = self.__choose_random_situation(seed)
+            scenario_dict = self.situations_dict[scenario_name]
+            
         self.__active_scenario_name = scenario_name
-        self.__seed = seed
         self.__active_scenario_dict = scenario_dict
-         
-        # World
-        # REMOVED: Reloading the map here wipes any pre-spawned cones from the training script.
-        # if self.__first_episode and self.__active_scenario_dict['map_name'] == self.__world.get_active_map_name():
-        #     self.__world.reload_map()
-        self.__first_episode = False
         
         self.__load_world(scenario_dict['map_name'])
-        self.__map = self.__world.update_traffic_map()
+        self.__world.update_traffic_map()
         time.sleep(2.0)
         
         # Weather
@@ -352,60 +276,73 @@ class CarlaEnv(gym.Env):
         
         # Ego vehicle
         self.__spawn_vehicle(scenario_dict)
-        if self.__show_sensor_data:   
-            self.display = Display('Ego Vehicle Sensor feed', self.__vehicle)
-            self.display.play_window_tick()
-        
+            
+        if self.__show_sensor_data:
+            self.display = Display('Sensor Feed', self.__vehicle)
+
         # Traffic
         if self.__has_traffic:
             self.__spawn_traffic(seed=seed)
-            # self.__world.spawn_pedestrians_around_ego(self.__vehicle.get_location(), num_pedestrians=10)
+        
         self.__toggle_lights()
 
     def clean_scenario(self):
         self.__vehicle.destroy_vehicle()
         self.__world.destroy_vehicles()
         self.__world.destroy_pedestrians()
-        if self.__verbose:
-            print("Scenario cleaned!")
-    
+
     def print_all_scenarios(self):
         for idx, i in enumerate(self.situations_list):
             print(idx, ": ", i)
     
     def __load_world(self, name):
         self.__world.set_active_map(name)
-        
+
     def __spawn_vehicle(self, s_dict):
         location = (s_dict['initial_position']['x'], s_dict['initial_position']['y'], s_dict['initial_position']['z'])
         rotation = (s_dict['initial_rotation']['pitch'], s_dict['initial_rotation']['yaw'], s_dict['initial_rotation']['roll'])
         try:
             self.__vehicle.spawn_vehicle(location, rotation)
         except Exception as e:
-            print(f"[Port {self.__port}] Error spawning vehicle! Reloading Map...")
-            self.__world.reload_map()
-            self.load_scenario(self.__active_scenario_name, self.__seed)
-    
+            if self.__verbose:
+                print(f"[Port {self.__port}] Spawn area occupied: {e}. Clearing area and retrying...")
+            
+            # Instead of map reload (which kills cones), just try to clear spawn point actors
+            all_actors = self.__world.get_world().get_actors()
+            for actor in all_actors.filter('vehicle.*'):
+                if actor.get_location().distance(carla.Location(x=location[0], y=location[1], z=location[2])) < 5.0:
+                    try: actor.destroy()
+                    except: pass
+            
+            time.sleep(1.0)
+            try:
+                self.__vehicle.spawn_vehicle(location, rotation)
+            except Exception as e2:
+                if self.__verbose: print(f"[Port {self.__port}] Failed second spawn, doing fallback map reload...")
+                self.__world.reload_map()
+                self.__cones_spawned = False
+                time.sleep(2.0)
+                self.__vehicle.spawn_vehicle(location, rotation)
+
     def __toggle_lights(self):
-        if "night" in self.__world.get_active_weather().lower() or "noon" in self.__world.get_active_weather().lower():
+        weather = self.__world.get_active_weather().lower()
+        if "night" in weather or "noon" in weather:
             self.__world.toggle_lights(lights_on=True)
             self.__vehicle.toggle_lights(lights_on=True)
         else:
             self.__world.toggle_lights(lights_on=False)
             self.__vehicle.toggle_lights(lights_on=False)
-
+        
     def __load_weather(self, weather_name):
         if self.__random_weather:
             self.__world.set_random_weather()
         else:
             self.__world.set_active_weather_preset(weather_name)
-    
-    # If the seed is not none send the seed, else make the scenario based on its name
-    def __spawn_traffic(self, seed):
-        if not self.__random_traffic and self.__active_scenario_dict['traffic_density'] == 'None':
-            return
 
-        # The traffic isn't random, so it will be based on the scenario name
+    def __spawn_traffic(self, seed):
+        if not self.__random_traffic and self.__active_scenario_dict.get('traffic_density') == 'None':
+            return
+        
         if not self.__random_traffic:
             random.seed(self.__active_scenario_name)
             seed = self.__active_scenario_name
@@ -413,94 +350,57 @@ class CarlaEnv(gym.Env):
         if seed is not None:
             random.seed(seed)
         
-        # Give density to the traffic
         if not self.__random_traffic:
-            if self.__active_scenario_dict['traffic_density'] == 'Low':
-                num_vehicles = random.randint(1, 5)
-            else:
-                num_vehicles = random.randint(10, 20)
+            density = self.__active_scenario_dict.get('traffic_density', 'Low')
+            num_vehicles = random.randint(1, 5) if density == 'Low' else random.randint(10, 20)
         else:
             num_vehicles = random.randint(1, 20)
         
         self.__world.spawn_vehicles_around_ego(self.__vehicle.get_vehicle(), radius=100, num_vehicles_around_ego=num_vehicles, seed=seed)
-    
-    def __choose_random_situation(self, seed=None):
-        if seed:
-            np.random.seed(seed)
-        return np.random.choice(self.situations_list)
 
-    def __chose_situation(self, seed):
-        if isinstance(seed, str):
-            print("Seed needs to be an integer! Loading a random scenario...")
-            return self.__choose_random_situation()
-        else:
-            return self.__choose_random_situation(seed)
-    
-    # ===================================================== SITUATIONS PARSING =====================================================
-    # Filter the current situations based on the flag
-    def __get_situations(self, scenarios):
-        with open(config.ENV_SCENARIOS_FILE, 'r') as f:
-            self.situations_dict = json.load(f)
-
-        if scenarios:
-            self.situations_dict = {key: value for key, value in self.situations_dict.items() if value['situation'] in scenarios}
-
-        self.situations_list = list(self.situations_dict.keys())
-
-            
-    # ===================================================== AUX METHODS =====================================================
-    def __control_vehicle(self, action):
-        if self.__is_continuous:
-            self.__vehicle.control_vehicle(action)
-        else:
-            self.__vehicle.control_vehicle_discrete(action)
-
-    def __timer_truncated(self):
-        if time.time() - self.start_time > self.__time_limit:
-            self.__time_limit_reached = True
-            return True
-        else:
-            return False
-    
-    def __start_timer(self):
-        self.start_time = time.time()
-    
-    def get_path_waypoints(self, spacing=5.0):
-        current_location = self.__vehicle.get_location()
-        map_ = self.__map
-        target_location = carla.Location(x=self.__active_scenario_dict['target_position']['x'], y=self.__active_scenario_dict['target_position']['y'], z=self.__active_scenario_dict['target_position']['z'])
-
-        # Find the closest waypoint to the current location
-        current_waypoint = map_.get_waypoint(current_location)
-
-        # Find the closest waypoint to the target location
-        target_waypoint = map_.get_waypoint(target_location)
-
-        # Generate waypoints along the route with the specified spacing
-        waypoints = []
-        max_waypoints = 500 # Safety limit to prevent infinite loops
-        while current_waypoint.transform.location.distance(target_waypoint.transform.location) > spacing and len(waypoints) < max_waypoints:
-            waypoints.append(current_waypoint.transform.location)
-            next_wps = current_waypoint.next(spacing)
-            if not next_wps:
-                break
-            current_waypoint = next_wps[0]
-
-        # self.draw_waypoints(waypoints, life_time=5.0) # <--- Add this
-        return waypoints[1:] # Take out the first waypoint because it is the starting point
+    def __spawn_all_cones(self):
+        if self.__cone_config is None: return
         
+        # Self-healing: Check if cones actually exist in the world
+        world_cone_count = self.__world.get_cone_count()
+        if world_cone_count >= len(self.__cone_config):
+            self.__cones_spawned = True
+            return
 
-    
+        if self.__verbose:
+            print(f"[Port {self.__port}] Cones missing or map reloaded. Spawning {len(self.__cone_config)} cones...")
+            
+        for cone in self.__cone_config:
+            self.__world.spawn_cones_from_positions([{'x': cone['x'], 'y': cone['y'], 'z': cone.get('z', 0.0)}])
+        
+        self.__cones_spawned = True
+        self.__world.tick()
+
+    def get_path_waypoints(self, spacing=5.0):
+        curr_wp = self.__world.get_map().get_waypoint(self.__vehicle.get_location())
+        target_loc = carla.Location(
+            x=self.__active_scenario_dict['target_position']['x'], 
+            y=self.__active_scenario_dict['target_position']['y'], 
+            z=self.__active_scenario_dict['target_position']['z']
+        )
+        target_wp = self.__world.get_map().get_waypoint(target_loc)
+        
+        waypoints = []
+        while curr_wp.transform.location.distance(target_wp.transform.location) > spacing and len(waypoints) < 500:
+            waypoints.append(curr_wp.transform.location)
+            next_wps = curr_wp.next(spacing)
+            if not next_wps: break
+            curr_wp = next_wps[0]
+        return waypoints[1:]
+
     def get_vehicle(self):
         return self.__vehicle
-        
-    # ===================================================== DEBUG METHODS =====================================================
+
     def place_spectator_above_vehicle(self):
-        self.__world.place_spectator_above_location(self.__vehicle.get_location())    
+        self.__world.place_spectator_above_location(self.__vehicle.get_location())
 
     def output_all_waypoints(self, spacing=5):
-        waypoints = self.__map.generate_waypoints(distance=spacing)
-
+        waypoints = self.__world.get_map().generate_waypoints(distance=spacing)
         for w in waypoints:
             self.__world.get_world().debug.draw_string(w.transform.location, 'O', draw_shadow=False,
                                        color=carla.Color(r=255, g=0, b=0), life_time=120.0,
@@ -511,3 +411,20 @@ class CarlaEnv(gym.Env):
             self.__world.get_world().debug.draw_string(w, 'O', draw_shadow=False,
                                                     color=carla.Color(r=255, g=0, b=0), life_time=life_time,
                                                     persistent_lines=True)
+
+    def __start_timer(self):
+        self.start_time = time.time()
+
+    def __get_situations(self, scenarios):
+        with open(config.ENV_SCENARIOS_FILE, 'r') as f:
+            self.situations_dict = json.load(f)
+        if scenarios:
+            self.situations_dict = {k: v for k, v in self.situations_dict.items() if v['situation'] in scenarios}
+        self.situations_list = list(self.situations_dict.keys())
+
+    def __choose_random_situation(self, seed=None):
+        if seed: np.random.seed(seed)
+        return np.random.choice(self.situations_list)
+
+    def __chose_situation(self, seed):
+        return self.__choose_random_situation(seed)

@@ -7,3 +7,6 @@ agent/__pycache__/
 logs/
 ppo_av_tensorboard/
 test_agent.py
+checkpoints/
+tensorboard_cone/
+logs_cone/

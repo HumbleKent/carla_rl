@@ -1,0 +1,12 @@
+conda activate carla_blackwell
+
+tensorboard --logdir ./tensorboard_cone/
+
+cd C:\Users\User\Documents\CARLA_0.9.15\WindowsNoEditor; .\CarlaUE4.exe -carla-rpc-port=2000 -windowed -ResX=800 -ResY=450 -WinX=0 -WinY=100
+
+cd C:\Users\User\Documents\CARLA_0.9.15\WindowsNoEditor; .\CarlaUE4.exe -carla-rpc-port=3000 -windowed -ResX=800 -ResY=450 -WinX=0 -WinY=600
+
+python train_cone_avoidance.py --ports 2000 3000 --run-name parallel_run_v1
+
+python evaluate_best_model.py --name blackwell_fast_v1 --episodes 5
+    

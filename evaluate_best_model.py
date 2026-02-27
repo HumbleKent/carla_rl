@@ -10,15 +10,15 @@ from stable_baselines3.common.monitor import Monitor
 from gymnasium.envs.registration import register
 
 import configuration as config
-from env.environment_cone import ConeCarlaEnv
+from env.environment import CarlaEnv
 from agent.cone_architecture import CustomExtractor_PPO_Cone
 from src.world import World
 
 # 1. Register the environment
 try:
     register(
-        id="carla-cone-rl-gym-v0",
-        entry_point="env.environment_cone:ConeCarlaEnv",
+        id="carla-rl-gym-v0",
+        entry_point="env.environment:CarlaEnv",
         max_episode_steps=config.ENV_MAX_STEPS,
     )
 except Exception:
@@ -44,7 +44,7 @@ def main():
     # 3. Initialize the environment
     # We use DummyVecEnv and VecTransposeImage to match the training observation processing
     def make_env():
-        env = gym.make('carla-cone-rl-gym-v0', 
+        env = gym.make('carla-rl-gym-v0', 
                        port=args.port, 
                        time_limit=120, 
                        initialize_server=False, 

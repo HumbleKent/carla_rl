@@ -41,9 +41,15 @@ class Vehicle:
             print("Error: No vehicle to set autopilot. Try spawning the vehicle first.")
     
     def collision_occurred(self):
+        if 'collision' not in self.__sensor_dict:
+            print("[WARNING] collision_occurred() called but 'collision' sensor not in sensor_dict. Returning False.")
+            return False
         return self.__sensor_dict['collision'].collision_occurred()
 
     def lane_invasion_occurred(self):
+        if 'lane_invasion' not in self.__sensor_dict:
+            print("[WARNING] lane_invasion_occurred() called but 'lane_invasion' sensor not in sensor_dict. Returning False.")
+            return False
         return self.__sensor_dict['lane_invasion'].lane_invasion_occurred()
 
     def spawn_vehicle(self, location=None, rotation=None):
@@ -85,9 +91,10 @@ class Vehicle:
                 print("Spawning ego vehicle at location: ", carla_location, " and rotation: ", carla_rotation, " Transform: ", transform)
             try:
                 self.__vehicle = self.__world.try_spawn_actor(random.choice(vehicle_bp), transform)
-            except:
-                print("Error: Failed to spawn vehicle. Check the location and rotation provided.")
-                return
+                if self.__vehicle is None:
+                    raise RuntimeError(f"Collision at spawn point {carla_location}. Vehicle could not be spawned.")
+            except Exception as e:
+                raise RuntimeError(f"Failed to spawn vehicle: {e}")
         
         # Attach sensors
         vehicle_data = self.__read_vehicle_file(configuration.VEHICLE_SENSORS_FILE)
@@ -267,6 +274,9 @@ class Vehicle:
         self.__vehicle.apply_ackermann_control(self.__ackermann_control)
     
     def toggle_lights(self, lights_on=True):
+        if self.__vehicle is None:
+            return
+            
         if lights_on:
             self.__vehicle.set_light_state(carla.VehicleLightState(carla.VehicleLightState.Position | carla.VehicleLightState.LowBeam))
         else:
@@ -286,5 +296,7 @@ class Vehicle:
     
     # In Km/h
     def get_speed(self):
+        if self.__vehicle is None:
+            return 0.0
         return 3.6 * self.__vehicle.get_velocity().length()
 

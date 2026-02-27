@@ -5,8 +5,8 @@ from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 from gymnasium import spaces
 import numpy as np
 
-# Define the continuous action space for PPO
-continuous_action_space = spaces.Box(low=np.array([-1.0, -1.0]), high=np.array([1.0, 1.0]), dtype=np.float32)
+# Define the action space for PPO
+action_space = spaces.Box(low=np.array([-1.0, -1.0]), high=np.array([1.0, 1.0]), dtype=np.float32)
 
 class CustomExtractor_PPO_Cone(BaseFeaturesExtractor):
     def __init__(self, observation_space: spaces.Dict):
@@ -17,7 +17,7 @@ class CustomExtractor_PPO_Cone(BaseFeaturesExtractor):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
         super().__init__(observation_space, features_dim=features_dim)
-        self.action_dim = continuous_action_space.shape[0]  # Dimensionality of the action space
+        self.action_dim = action_space.shape[0]  # Dimensionality of the action space
 
         # Custom CNN for processing the RGB data
         self.image_model = nn.Sequential(

@@ -103,10 +103,15 @@ class TrafficControl:
 
     def toggle_lights(self, lights_on=True):
         for vehicle in self.__active_vehicles:
-            if lights_on:
-                vehicle.set_light_state(carla.VehicleLightState(carla.VehicleLightState.Position | carla.VehicleLightState.LowBeam))
-            else:
-                vehicle.set_light_state(carla.VehicleLightState.NONE)
+            if vehicle is None:
+                continue
+            try:
+                if lights_on:
+                    vehicle.set_light_state(carla.VehicleLightState(carla.VehicleLightState.Position | carla.VehicleLightState.LowBeam))
+                else:
+                    vehicle.set_light_state(carla.VehicleLightState.NONE)
+            except:
+                continue
             
     # ============ Pedestrian Control ============
     def spawn_pedestrians(self, num_walkers=10):

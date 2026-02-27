@@ -136,4 +136,5 @@ class ConeControl:
         return self.__active_cones
     
     def get_cone_count(self):
-        return len(self.__active_cones)
+        """Get the number of currently spawned cones. Refreshes from world if needed."""
+        return len(self.get_active_cones())
