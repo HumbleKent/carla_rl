@@ -72,7 +72,7 @@ class CarlaEnv(gym.Env):
         self.__waypoints = None
         self.__situations_map = situations_map
         self.__episode_number = 0
-        self.__time_limit = time_limit
+        self.__episode_number = 0
         self.__truncated = False
         self.last_action = np.array([0.0, 0.0], dtype=np.float32)
         self.current_cone_data = []
@@ -171,9 +171,15 @@ class CarlaEnv(gym.Env):
         terminated = self.__reward_func.get_terminated()
         self.__waypoints = self.__reward_func.get_waypoints()
         
-        self.__truncated = (time.time() - self.start_time > self.__time_limit)
+        # Use exact step count instead of wall-clock time for reproducible RL episodes
+        self.__truncated = (self.number_of_steps >= config.ENV_MAX_STEPS)
         
         if terminated or self.__truncated:
+            reason = "SUCCESS (Goal Reached)" if terminated else "TIMEOUT (Max Steps)"
+            if self.__vehicle.collision_occurred(): reason = "CRASH (Collision)"
+            elif self.__vehicle.lane_invasion_occurred(): reason = "OFF-ROAD (Lane Invasion)"
+            
+            print(f"[Port {self.__port}] Episode {self.__episode_number} End | Reason: {reason} | Score: {self.__reward_func.get_total_ep_reward():.2f}")
             self.clean_scenario()
         
         self.last_action = np.array(action, dtype=np.float32)
@@ -243,6 +249,10 @@ class CarlaEnv(gym.Env):
             last_action=self.last_action
         )
         
+        # Refresh the Pygame sensor window every step
+        if self.__show_sensor_data and hasattr(self, 'display'):
+            self.display.play_window_tick()
+        
         # Reward Aux
         self.__reward_target_pos = target_position
         self.__reward_current_pos = current_position
@@ -253,6 +263,8 @@ class CarlaEnv(gym.Env):
         self.__vehicle.destroy_vehicle()
         self.__world.destroy_vehicles()
         self.__world.destroy_pedestrians()
+        if self.__show_sensor_data and hasattr(self, 'display'):
+            self.display.close_window()
         if self.__automatic_server_initialization:
             CarlaServer.close_server(self.__server_process)
 
@@ -277,7 +289,8 @@ class CarlaEnv(gym.Env):
         # Ego vehicle
         self.__spawn_vehicle(scenario_dict)
             
-        if self.__show_sensor_data:
+        # Create the Display window only once (guard against re-creation every episode)
+        if self.__show_sensor_data and not hasattr(self, 'display'):
             self.display = Display('Sensor Feed', self.__vehicle)
 
         # Traffic

@@ -465,31 +465,51 @@ class Collision:
 
 # ====================================== Lane Invasion ======================================
 class Lane_Invasion:
+    # Solid-type markings that should never be crossed.
+    # BrokenSolid / SolidBroken are mixed markings — treat them as solid (conservative).
+    SOLID_TYPES = {
+        carla.LaneMarkingType.Solid,
+        carla.LaneMarkingType.SolidSolid,
+        carla.LaneMarkingType.SolidBroken,
+        carla.LaneMarkingType.BrokenSolid,
+    }
+
     def __init__(self, world, vehicle, sensor_dict):
         self.__sensor = self.attach_lane_invasion(world, vehicle, sensor_dict)
         self.__sensor.listen(lambda data: self.callback(data))
-        self.__sensor_ready = True
-        self.lane_transgression = False
+        self.__sensor_ready   = True
+        self.lane_transgression = False   # Any line was crossed
+        self.solid_transgression = False  # A solid line was crossed
 
     def attach_lane_invasion(self, world, vehicle, sensor_dict):
         sensor_bp = world.get_blueprint_library().find('sensor.other.lane_invasion')
-        
-        # This will place the camera in the front bumper of the car
-        transform = carla.Transform(carla.Location(x=sensor_dict['location_x'], y=sensor_dict['location_y'] , z=sensor_dict['location_z']))
-        lane_invasion_sensor = world.spawn_actor(sensor_bp, transform, attach_to=vehicle)
+        transform = carla.Transform(carla.Location(
+            x=sensor_dict['location_x'],
+            y=sensor_dict['location_y'],
+            z=sensor_dict['location_z']
+        ))
+        return world.spawn_actor(sensor_bp, transform, attach_to=vehicle)
 
-        return lane_invasion_sensor
-    
     def callback(self, data):
         self.lane_transgression = True
+        # Check if any of the crossed markings is solid
+        for marking in data.crossed_lane_markings:
+            if marking.type in self.SOLID_TYPES:
+                self.solid_transgression = True
+                break
         if configuration.VERBOSE:
-            print(f"Lane Invasion Occurred at {data.timestamp} with {data.crossed_lane_markings}")
-    
+            print(f"Lane Invasion at {data.timestamp} | markings: {data.crossed_lane_markings} | solid={self.solid_transgression}")
+
     def is_ready(self):
         return self.__sensor_ready
-    
+
     def lane_invasion_occurred(self):
+        """Returns True if ANY lane line was crossed this step (broken or solid)."""
         return self.lane_transgression
+
+    def solid_line_crossed(self):
+        """Returns True if a solid (non-crossable) line was crossed this step."""
+        return self.solid_transgression
 
     def destroy(self):
         self.__sensor.destroy()

@@ -52,6 +52,12 @@ class Vehicle:
             return False
         return self.__sensor_dict['lane_invasion'].lane_invasion_occurred()
 
+    def solid_line_crossed(self):
+        """Returns True if a solid (non-crossable) lane marking was crossed this step."""
+        if 'lane_invasion' not in self.__sensor_dict:
+            return False
+        return self.__sensor_dict['lane_invasion'].solid_line_crossed()
+
     def spawn_vehicle(self, location=None, rotation=None):
         # Check if the vehicle is already spawned
         if self.__vehicle is not None:

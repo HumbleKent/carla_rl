@@ -42,29 +42,50 @@ class PreProcessing:
         if last_action is None:
             last_action = np.array([0.0, 0.0], dtype=np.float32)
         
-        # 5. Flatten cone data (15 features)
+        # Normalize values to be roughly between [-1.0, 1.0] for stable neural network training
+        norm_target_dist = min(target_distance / 200.0, 1.0) # Assume max meaningful distance is ~200m
+        norm_wp_dist = min(next_waypoint_distance / 20.0, 1.0)
+        
+        # Yaw is [-pi, pi], divide by pi to get [-1, 1]
+        norm_yaw_error = yaw_error / math.pi
+        
+        # Assume max realistic ang_v_z is ~3.0
+        norm_ang_v_z = np.clip(ang_v_z / 3.0, -1.0, 1.0)
+        
+        # Assume max forward velocity is ~30 m/s (108 km/h), lateral rarely exceeds ~10 m/s
+        norm_forward_v = np.clip(forward_v / 30.0, -1.0, 1.0)
+        norm_lateral_v = np.clip(lateral_v / 10.0, -1.0, 1.0)
+        
+        # 5. Flatten and normalize cone data (15 features)
+        # We normalize distance relative to 20 meters. 
+        # If no cone exists, we output [0, 0, 1.0] instead of raw distances
         cone_features = []
+        max_cone_dist = 20.0
         if cone_data:
             for cone in cone_data:
-                cone_features.extend([cone['rel_x'], cone['rel_y'], cone['dist']])
+                norm_rel_x = np.clip(cone['rel_x'] / max_cone_dist, -1.0, 1.0)
+                norm_rel_y = np.clip(cone['rel_y'] / max_cone_dist, -1.0, 1.0)
+                norm_dist  = np.clip(cone['dist'] / max_cone_dist, 0.0, 1.0)
+                cone_features.extend([norm_rel_x, norm_rel_y, norm_dist])
             
         # Ensure we have fixed size (5 cones * 3 features = 15)
         num_expected_cones = 5
         current_num = len(cone_data) if cone_data else 0
         if current_num < num_expected_cones:
             for _ in range(num_expected_cones - current_num):
-                cone_features.extend([0.0, 0.0, 1000.0]) # Padding
+                # Padding: If no cone is in slot, distance is considered "far" (1.0 in normalized space)
+                cone_features.extend([0.0, 0.0, 1.0]) 
         elif current_num > num_expected_cones:
             cone_features = cone_features[:num_expected_cones*3]
             
         # Assemble 'rest' vector (Total: 2 + 4 + 2 + 15 = 23)
         rest_list = [
-            target_distance, 
-            next_waypoint_distance, 
-            yaw_error, 
-            ang_v_z, 
-            forward_v, 
-            lateral_v
+            norm_target_dist, 
+            norm_wp_dist, 
+            norm_yaw_error, 
+            norm_ang_v_z, 
+            norm_forward_v, 
+            norm_lateral_v
         ] + list(last_action) + cone_features
         
         neo_observation_data = {

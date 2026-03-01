@@ -125,12 +125,10 @@ def main():
             to_destroy.extend(list(actors.filter('controller.ai.walker')))
             
             print(f"Deep cleanup: Found {len(to_destroy)} actors to destroy.")
-            for actor in to_destroy:
-                if actor.is_alive:
-                    try:
-                        actor.destroy()
-                    except Exception:
-                        pass # Ignore actors that already disappeared
+            
+            # Use batch destruction to avoid race conditions with other environments
+            batch = [carla.command.DestroyActor(x) for x in to_destroy]
+            client.apply_batch(batch)
             
             print("Deep cleanup: CARLA world is now clean.")
         except Exception as e:

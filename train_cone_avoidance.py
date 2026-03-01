@@ -46,9 +46,17 @@ class EpisodeEvalCallback(EvalCallback):
 
     def _on_step(self) -> bool:
         # local 'dones' is an array of booleans for each parallel environment
-        for done in self.locals['dones']:
+        for idx, done in enumerate(self.locals['dones']):
             if done:
                 self.episodes_finished += 1
+                
+                # Fetch episode info from Monitor wrapper
+                info = self.locals['infos'][idx]
+                if 'episode' in info:
+                    ep_rew = info['episode']['r']
+                    ep_len = info['episode']['l']
+                    scenario = info.get('scenario_name', 'Unknown')
+                    print(f"[Worker {idx}] Episode {self.episodes_finished} finished! Status: {scenario} | Reward: {ep_rew:.2f} | Steps: {ep_len}")
                 
                 # Trigger evaluation every N episodes
                 if self.episodes_finished % self.eval_ep_freq == 0:
@@ -86,7 +94,7 @@ def make_env(port, rank=0, spawn_cones=False):
                            time_limit=30, 
                            initialize_server=False, 
                            synchronous_mode=True, 
-                           show_sensor_data=False, 
+                           show_sensor_data=False,  # Disabled: subprocesses can't display Pygame windows
                            spawn_cones=True,
                            verbose=False,
                            action_jitter=0.0)
@@ -121,7 +129,7 @@ def make_eval_env(port):
                        time_limit=30,
                        initialize_server=False,
                        synchronous_mode=True,
-                       show_sensor_data=False,
+                       show_sensor_data=False,  # Disabled: eval env also runs in subprocess during training
                        spawn_cones=True,
                        verbose=False,
                        action_jitter=0.0)  # No jitter during eval
@@ -220,7 +228,12 @@ def main():
         )
 
     # 5. CALLBACKS (Both Eval and Saving are now done in one episode-based callback)
-    eval_port = args.ports[0]  # Use first port for evaluation
+    # Use the LAST port for evaluation, NOT the first.
+    # Port 0 (e.g. 2000) is already occupied by Worker 0's training subprocess.
+    # Connecting a second eval env to the same port kills Worker 0's vehicle mid-episode,
+    # causing it to silently stall and never log episodes again.
+    # Using the last port means only Worker N-1 pauses briefly during eval — it recovers fine.
+    eval_port = args.ports[-1]
     print(f"Creating dedicated eval env on port {eval_port}...")
     eval_env = DummyVecEnv([make_eval_env(eval_port)])
     eval_env = VecTransposeImage(eval_env)
@@ -259,16 +272,16 @@ def main():
                 settings.fixed_delta_seconds = None
                 world.apply_settings(settings)
                 
-                # Destroy all vehicles, walkers, sensors and cones
+                
                 actors = world.get_actors()
-                for actor in actors.filter('vehicle.*'):
-                    if actor.is_alive: actor.destroy()
-                for actor in actors.filter('sensor.*'):
-                    if actor.is_alive: actor.destroy()
-                for actor in actors.filter('walker.*'):
-                    if actor.is_alive: actor.destroy()
-                for actor in actors.filter('static.prop.constructioncone'):
-                    if actor.is_alive: actor.destroy()
+                to_destroy = []
+                to_destroy.extend(list(actors.filter('vehicle.*')))
+                to_destroy.extend(list(actors.filter('sensor.*')))
+                to_destroy.extend(list(actors.filter('walker.*')))
+                to_destroy.extend(list(actors.filter('static.prop.constructioncone')))
+                
+                batch = [carla.command.DestroyActor(x) for x in to_destroy]
+                client.apply_batch(batch)
                 
                 time.sleep(1) # Give time for destruction
                 print(f"Cleanup finished on port {port}")
