@@ -66,6 +66,6 @@ class CustomExtractor_PPO_Cone(BaseFeaturesExtractor):
 
     def process_observations(self, observations):
         rgb_data = F.interpolate(observations['rgb_data'], size=(224, 224), mode='bilinear', align_corners=False)
-        rgb_data = rgb_data / 255.0  # Normalize the pixel values to be in the range [0, 1]
-
+        # Stable-Baselines3 automatically normalizes uint8 image spaces to [0, 1]
+        
         return (rgb_data.float().to(self.device), observations['rest'])

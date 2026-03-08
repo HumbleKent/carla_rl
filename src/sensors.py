@@ -434,28 +434,38 @@ class IMU:
 
 # ====================================== Collision ======================================
 class Collision:
+    def attach_collision(self, world, vehicle, sensor_dict):
+        sensor_bp = world.get_blueprint_library().find('sensor.other.collision')
+        transform = carla.Transform(carla.Location(x=sensor_dict['location_x'], y=sensor_dict['location_y'] , z=sensor_dict['location_z']))
+        collision_sensor = world.spawn_actor(sensor_bp, transform, attach_to=vehicle)
+        return collision_sensor
+
+    def callback(self, data):
+        if configuration.VERBOSE:
+            print(f"Collision Occurred at {data.timestamp} with {data.other_actor}")
+        self.critical_collision = True
+        
+        # Track if specifically a traffic cone was hit
+        if 'constructioncone' in data.other_actor.type_id:
+            self.hit_cone_flag = True
+
     def __init__(self, world, vehicle, sensor_dict):
         self.__sensor = self.attach_collision(world, vehicle, sensor_dict)
         self.__sensor.listen(lambda data: self.callback(data))
         self.__sensor_ready = True
         self.critical_collision = False
+        self.hit_cone_flag = False
 
-    def attach_collision(self, world, vehicle, sensor_dict):
-        sensor_bp = world.get_blueprint_library().find('sensor.other.collision')
-        
-        # This will place the camera in the front bumper of the car
-        transform = carla.Transform(carla.Location(x=sensor_dict['location_x'], y=sensor_dict['location_y'] , z=sensor_dict['location_z']))
-        collision_sensor = world.spawn_actor(sensor_bp, transform, attach_to=vehicle)
-
-        return collision_sensor
-    
-    def callback(self, data):
-        if configuration.VERBOSE:
-            print(f"Collision Occurred at {data.timestamp} with {data.other_actor}")
-        self.critical_collision = True
-    
     def collision_occurred(self):
         return self.critical_collision
+    
+    def hit_cone(self):
+        return self.hit_cone_flag
+    
+    def reset_step(self):
+        """Reset the flags for the current step."""
+        self.critical_collision = False
+        self.hit_cone_flag = False
     
     def is_ready(self):
         return self.__sensor_ready
@@ -510,6 +520,11 @@ class Lane_Invasion:
     def solid_line_crossed(self):
         """Returns True if a solid (non-crossable) line was crossed this step."""
         return self.solid_transgression
+
+    def reset_step(self):
+        """Reset the flags for the current step."""
+        self.lane_transgression = False
+        self.solid_transgression = False
 
     def destroy(self):
         self.__sensor.destroy()

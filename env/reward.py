@@ -15,83 +15,114 @@ class Reward:
         self.waypoints            = []      
         self.total_ep_reward      = 0  
         self.prev_target_distance = None # Used to calculate distance progress
+        self.termination_reason   = "None"
         
         self.countint = 0
 
     # ======================================== Main Reward Function ==========================================================
-    def calculate_reward(self, vehicle: Vehicle, current_pos, target_pos, next_waypoint_pos, speed, cone_data=None) -> float:   
+    def calculate_reward(self, vehicle: Vehicle, current_pos, target_pos, next_waypoint_pos, speed, cone_data=None, step_count=0, verbose=False, debug_manager=None) -> float:   
         target_distance = self.distance(current_pos, target_pos)
         next_waypoint_distance = self.distance(current_pos, next_waypoint_pos)
         
         if self.terminated:
             self.countint += 1
-            print("The episode already ended!!!, count: ", self.countint)
+            if debug_manager:
+                debug_manager.log("term", f"Episode already ended! count: {self.countint}")
             
-        # 1. Living Penalty (The 'Cost of Time')
-        # We keep this so the agent still wants to finish the level, but it won't be paralyzing anymore.
-        living_penalty = -20.0 / config.ENV_MAX_STEPS
-        
-        # 2. Stand-Still Penalty 
+        # 1. Stand-Still Penalty (Harsh)
         stand_still_penalty = self.__stand_still_penalty(speed)
+        
+        # 2. Moving Forward Bonus
+        moving_bonus = 0.0
+        if speed > 2.0:
+            moving_bonus = 0.1 
 
-        # 3. Distance Delta (The 'Progress Reward')
+        # 3. Progress Reward
         distance_reward = 0.0
         if self.prev_target_distance is not None:
             delta = self.prev_target_distance - target_distance
-            
-            ### CHANGED: Massively boosted the progress reward. 
-            ### Now, moving forward easily overshadows the living and stand-still penalties.
-            ### Was: delta * 0.5
-            distance_reward = delta * 10.0 
+            distance_reward = delta * 20.0 
             
         self.prev_target_distance = target_distance
 
-        # 4. Proximity Cone Penalty (Near-misses)
-        cone_proximity_penalty = self.__proximity_cone_penalty(cone_data)
+        # 4. Proximity Cone Penalty
+        cone_proximity_penalty = self.__proximity_cone_penalty(cone_data, safe_distance=3.0)
 
-        reward = self.__collision_reward(vehicle) + \
-            self.__steering_jerk(vehicle) + \
-            self.__throttle_brake_jerk(vehicle) + \
-            self.__speed_reward(speed) + \
-            self.__target_destination(target_distance) + \
-            self.__waypoint_reached(next_waypoint_distance) + \
-            living_penalty + \
-            stand_still_penalty + \
-            distance_reward + \
-            cone_proximity_penalty
+        # 5. Core components
+        coll_reward = self.__collision_reward(vehicle, verbose, debug_manager)
         
+        # --- PREVENT SUICIDE SHORTCUT ---
+        if self.terminated and step_count < config.ENV_MAX_STEPS:
+            lost_time_penalty = -2.0 * (config.ENV_MAX_STEPS - step_count) / config.ENV_MAX_STEPS
+            coll_reward += lost_time_penalty
+
+        steering_reward = self.__steering_jerk(vehicle)
+        throttle_reward = self.__throttle_brake_jerk(vehicle)
+        target_bonus = self.__target_destination(target_distance, threshold=2.0, verbose=verbose, debug_manager=debug_manager)
+        waypoint_reward = self.__waypoint_reached(next_waypoint_distance)
+        speed_reward = self.__speed_reward(speed)
+
+        # 6. Safety rules
+        light_reward = self.__light_pole_trangression(vehicle, verbose=verbose, debug_manager=debug_manager)
+        stop_reward = self.__stop_sign_transgression(vehicle, verbose=verbose, debug_manager=debug_manager)
+
+        reward = coll_reward + \
+                 steering_reward + \
+                 throttle_reward + \
+                 speed_reward + \
+                 target_bonus + \
+                 waypoint_reward + \
+                 moving_bonus + \
+                 stand_still_penalty + \
+                 distance_reward + \
+                 cone_proximity_penalty + \
+                 light_reward + \
+                 stop_reward
+        
+        if debug_manager and debug_manager.is_active("reward"):
+            debug_manager.log("reward", f"Step {step_count} | R: {reward:.3f} (S:{speed_reward:.2f} P:{distance_reward:.2f} C:{coll_reward:.2f} Con:{cone_proximity_penalty:.2f})")
+
         self.total_ep_reward += reward
         
         return reward
         
     # ============================================= Reward Functions ==========================================================
-    def __collision_reward(self, vehicle):
+    def __collision_reward(self, vehicle, verbose=False, debug_manager=None):
         '''
-        Penalizes the vehicle differently depending on the type of line crossed:
-
-        - Hard collision (wall/car): heavy penalty, no instant termination
-          (agent can learn to recover rather than always dying at step 1).
-
-        - Broken line crossed: small recurring penalty per step.
-          Allowed — overtaking, lane changing for cone avoidance, etc.
-          The agent is discouraged but not stopped.
-
-        - Solid line crossed: IMMEDIATE episode termination + large penalty.
-          Never allowed — this is a hard road rule violation.
+        Redesigned collision logic:
+        - Cone hit: CRITICAL FAILURE. -30 penalty and immediate termination.
+        - Solid line: CRITICAL FAILURE. -50 penalty and immediate termination.
+        - Hard collision (wall/car): -20 penalty. No termination (allows learning to recover).
+        - Broken line: -2 penalty (soft discouragement).
         '''
         penalty = 0.0
 
-        if vehicle.collision_occurred():
-            penalty -= 15.0
+        if vehicle.hit_cone():
+            # New termination condition: Hitting a cone ends the episode
+            self.terminated = True
+            self.termination_reason = "Hit a traffic cone"
+            penalty -= 30.0
+            if debug_manager:
+                debug_manager.log("term", "Hit a traffic cone!")
+            elif verbose: 
+                print("\n[REWARD] TERMINATED: Hit a traffic cone!")
+            return penalty
 
         if vehicle.solid_line_crossed():
-            # Hard violation — end episode immediately
             self.terminated = True
+            self.termination_reason = "Crossed a solid line"
+            penalty -= 50.0
+            if debug_manager:
+                debug_manager.log("term", "Crossed a solid line!")
+            elif verbose: 
+                print("\n[REWARD] TERMINATED: Crossed a solid line!")
+            return penalty
+
+        if vehicle.collision_occurred():
             penalty -= 20.0
 
-        elif vehicle.lane_invasion_occurred():
-            # Broken line — soft recurring penalty, episode continues
-            penalty -= 5.0
+        if vehicle.lane_invasion_occurred():
+            penalty -= 2.0
 
         return penalty
 
@@ -109,24 +140,25 @@ class Reward:
         return -lbd if throttle_diff > threshold else 0.0
 
     def __speed_reward(self, speed, speed_limit=50):
-        # Give a substantial positive reward for moving, scaling with speed
-        if speed < 2:
+        # Always reward moving. 
+        if speed <= 0.1:
             return 0.0
-        elif speed >= 2 and speed <= speed_limit:
-            # Reward smooth driving (peaks at +1.0 per frame at speed_limit)
+        elif speed <= speed_limit:
+            # Linear reward that peaks at +1.0 at speed limit
             return (speed / speed_limit)
         else:
-            return -1.0  # Excessive speed over limit
+            # Gentle penalty for overspeeding rather than a hard drop
+            return 1.0 - (speed - speed_limit) * 0.1
 
     def __stand_still_penalty(self, speed):
         """Strongly penalize the agent for not moving when it should be."""
         if speed < 1.0:
-            # -1.0 per step is massively worse than the total penalty for a lane error.
-            # This completely breaks the "safest option is to never move" local optimum!
-            return -1.0
+            # Increased to -10.0 to make it extremely painful to stay still.
+            # This forces the agent to explore even if it's scared of cones.
+            return -5.0
         return 0.0
  
-    def __proximity_cone_penalty(self, cone_data, safe_distance=2.5):
+    def __proximity_cone_penalty(self, cone_data, safe_distance=3.0):
         """Penalize being too close to a cone (near-miss penalty)."""
         if not cone_data:
             return 0.0
@@ -134,12 +166,19 @@ class Reward:
         for cone in cone_data:
             dist = cone['dist']
             if dist < safe_distance:
-                penalty -= (1.0 - (dist / safe_distance)) * (10.0 / config.ENV_MAX_STEPS)
+                # Stronger exponential penalty as the car gets closer to a cone
+                # At dist=0, it's -1.0 per frame. At dist=safe_distance, it's 0.
+                penalty -= (1.0 - (dist / safe_distance)) ** 2
         return penalty
 
-    def __target_destination(self, target_distance, threshold=5.0):
+    def __target_destination(self, target_distance, threshold=2.0, verbose=False, debug_manager=None):
         if target_distance <= threshold:
             self.terminated = True
+            self.termination_reason = "Reached Target Destination"
+            if debug_manager:
+                debug_manager.log("term", "Reached Target Destination! (Success)")
+            elif verbose: 
+                print("\n[REWARD] TERMINATED: Reached Target Destination! (Success)")
             return 500.0 # Massive bonus to ensure the model prioritizes finishing
         elif target_distance > threshold and target_distance <= 50.0:
             return (-7.0*target_distance + 395.0) / (9.0 * config.ENV_MAX_STEPS)
@@ -153,7 +192,8 @@ class Reward:
         Rewards the agent for hitting a waypoint.
         '''
         if next_waypoint_distance < threshold:
-            self.waypoints.pop(0)
+            if self.waypoints:
+                self.waypoints.pop(0)
             
             ### CHANGED: Increased from 2.0 to 5.0 to give a stronger "breadcrumb" signal 
             ### that following the path is highly desirable.
@@ -161,24 +201,39 @@ class Reward:
         else:
             return 0.0
         
-    def __light_pole_trangression(self, map, vehicle, world):
+    def __light_pole_trangression(self, vehicle, verbose=False, debug_manager=None):
         lbd = 20.0
+        world_obj = vehicle.get_world_obj() 
+        map = world_obj.get_map()
         current_waypoint = map.get_waypoint(vehicle.get_location(), project_to_road=True)
-        traffic_lights = world.get_world().get_traffic_lights_from_waypoint(current_waypoint, distance=10.0)
+        traffic_lights = world_obj.get_traffic_lights_from_waypoint(current_waypoint, distance=10.0)
 
         for traffic_light in traffic_lights:
             if traffic_light.get_state() == carla.TrafficLightState.Red:
                 stop_waypoints = traffic_light.get_stop_waypoints()
                 for stop_waypoint in stop_waypoints:
-                    if current_waypoint.transform.location.distance(stop_waypoint.transform.location) < 2.0 and vehicle.get_speed() > 0.3:
-                        ### Note: We leave termination here because running a red light is a critical failure.
-                        self.terminated = True
-                        return -lbd
+                    if current_waypoint.road_id == stop_waypoint.road_id and current_waypoint.lane_id == stop_waypoint.lane_id:
+                        vec_x = vehicle.get_location().x - stop_waypoint.transform.location.x
+                        vec_y = vehicle.get_location().y - stop_waypoint.transform.location.y
+                        forward_vec = stop_waypoint.transform.get_forward_vector()
+                        dot = vec_x * forward_vec.x + vec_y * forward_vec.y
+                        dist = current_waypoint.transform.location.distance(stop_waypoint.transform.location)
+                        
+                        if dot > 0.0 and dist < 4.0:
+                            self.terminated = True
+                            self.termination_reason = "Ran a Red Light"
+                            if debug_manager:
+                                debug_manager.log("term", "Ran a Red Light!")
+                            elif verbose: 
+                                print("\n[REWARD] TERMINATED: Ran a Red Light!")
+                            return -lbd
         return 0.0
 
-    def __stop_sign_transgression(self, vehicle, map):
+    def __stop_sign_transgression(self, vehicle, verbose=False, debug_manager=None):
         lbd = 20.0
         distance = 20.0  
+        world_obj = vehicle.get_world_obj()
+        map = world_obj.get_map()
         current_location = vehicle.get_location()
         current_waypoint = map.get_waypoint(current_location, project_to_road=True)
         
@@ -196,8 +251,12 @@ class Reward:
             elif self.inside_stop_area and not self.has_stopped:
                 self.has_stopped = False
                 self.inside_stop_area = False
-                ### Note: We leave termination here because running a stop sign is a critical failure.
                 self.terminated = True
+                self.termination_reason = "Ran a Stop Sign"
+                if debug_manager:
+                    debug_manager.log("term", "Ran a Stop Sign!")
+                elif verbose: 
+                    print("\n[REWARD] TERMINATED: Ran a Stop Sign!")
                 return -lbd
             else:            
                 return 0.0
@@ -217,6 +276,7 @@ class Reward:
     
     def reset(self, waypoints):
         self.terminated           = False
+        self.termination_reason   = "None"
         self.inside_stop_area     = False
         self.has_stopped          = False
         self.current_steering     = 0.0
@@ -230,3 +290,5 @@ class Reward:
     
     def get_total_ep_reward(self):
         return self.total_ep_reward
+    def get_termination_reason(self):
+        return self.termination_reason

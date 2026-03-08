@@ -12,6 +12,7 @@ from gymnasium.envs.registration import register
 import configuration as config
 from env.environment import CarlaEnv
 from agent.cone_architecture import CustomExtractor_PPO_Cone
+from agent.efficient_architecture import CustomExtractor_PPO_EfficientNet
 from src.world import World
 
 # 1. Register the environment
@@ -29,6 +30,7 @@ def main():
     parser.add_argument("--port", "-p", type=int, default=config.SIM_PORT, help="CARLA server port")
     parser.add_argument("--name", "-n", type=str, default="blackwell_fast_v1", help="Name of the training run")
     parser.add_argument("--episodes", "-ep", type=int, default=5, help="Number of evaluation episodes")
+    parser.add_argument("--efficient", "-eff", action="store_true", help="Force use of EfficientNet architecture")
     args = parser.parse_args()
 
     # 2. Define path to the best model
@@ -58,8 +60,15 @@ def main():
     env = VecTransposeImage(env)
 
     # 4. Load the PPO model
-    # We specify the custom architecture so SB3 knows how to load the weights
-    policy_kwargs = dict(features_extractor_class=CustomExtractor_PPO_Cone)
+    # Detect architecture based on argument or name
+    if args.efficient or "efficient" in args.name.lower():
+        print("Architecture detected/forced: EfficientNet-B0")
+        extractor_class = CustomExtractor_PPO_EfficientNet
+    else:
+        print("Architecture detected/forced: Custom CNN (Cone Architecture)")
+        extractor_class = CustomExtractor_PPO_Cone
+        
+    policy_kwargs = dict(features_extractor_class=extractor_class)
     model = PPO.load(model_path, env=env, custom_objects={"policy_kwargs": policy_kwargs})
 
     print(f"Starting evaluation for {args.episodes} episodes...")
@@ -82,6 +91,11 @@ def main():
                 # Take action in environment
                 obs, rewards, dones, infos = env.step(action)
                 
+                # Check for termination reason in info
+                termination_reason = "None"
+                if dones[0] and isinstance(infos[0], dict):
+                    termination_reason = infos[0].get('termination_reason', 'None')
+                
                 total_reward += rewards[0]
                 steps += 1
                 done = dones[0]
@@ -92,6 +106,7 @@ def main():
             print(f"\nEpisode {episode} finished!")
             print(f"Total Steps: {steps}")
             print(f"Total Reward: {total_reward:.2f}")
+            print(f"Termination Reason: {termination_reason}")
             time.sleep(2) # Brief pause between episodes
     except KeyboardInterrupt:
         print("\nEvaluation interrupted by user.")

@@ -19,6 +19,7 @@ from env.observation_action_space import (
     situations_map
 )
 from env.pre_processing import PreProcessing
+from src.debug_manager import DebugManager
 
 register(
     id="carla-rl-gym-v0",
@@ -33,7 +34,8 @@ class CarlaEnv(gym.Env):
     def __init__(self, scenarios=[], time_limit=60, initialize_server=False, 
                  random_weather=False, random_traffic=False, synchronous_mode=True, 
                  show_sensor_data=False, has_traffic=True, verbose=True, 
-                 spawn_cones=True, port=None, action_jitter=0.0):
+                 spawn_cones=True, port=None, action_jitter=0.0, is_eval=False,
+                 debug_features=[]):
         super().__init__()
         
         self.__port = port if port is not None else config.SIM_PORT
@@ -47,6 +49,10 @@ class CarlaEnv(gym.Env):
         self.__cones_spawned = False
         self.__spawn_cones = spawn_cones 
         self.__action_jitter = action_jitter
+        self.__is_eval = is_eval
+        
+        # Debugging
+        self.debug_manager = DebugManager(debug_features)
 
         # 1. Server initialization
         if self.__automatic_server_initialization:
@@ -103,8 +109,11 @@ class CarlaEnv(gym.Env):
         self.place_spectator_above_vehicle()
         
         # Pathfinding
-        self.__waypoints = self.get_path_waypoints(spacing=config.ENV_WAYPOINT_SPACING)
-        self.__waypoints = [np.array([w.x, w.y, w.z]) for w in self.__waypoints]
+        waypoints_locations = self.get_path_waypoints(spacing=config.ENV_WAYPOINT_SPACING)
+        self.debug_manager.draw_waypoints(self.__world.get_world(), waypoints_locations)
+        self.debug_manager.draw_target(self.__world.get_world(), self.__reward_target_pos)
+        
+        self.__waypoints = [np.array([w.x, w.y, w.z]) for w in waypoints_locations]
         
         # Wait for sensors
         waited = 0
@@ -164,8 +173,11 @@ class CarlaEnv(gym.Env):
             self.__reward_current_pos, 
             self.__reward_target_pos, 
             self.__reward_next_waypoint_pos, 
-            self.__reward_speed,
-            cone_data=self.current_cone_data
+            speed=self.__reward_speed,
+            cone_data=self.current_cone_data,
+            step_count=self.number_of_steps,
+            verbose=self.__verbose,
+            debug_manager=self.debug_manager
         )
         
         terminated = self.__reward_func.get_terminated()
@@ -202,6 +214,80 @@ class CarlaEnv(gym.Env):
             self.__active_scenario_dict['target_position']['y'], 
             self.__active_scenario_dict['target_position']['z']
         ])
+        
+        if self.__waypoints and len(self.__waypoints) > 0:
+            next_waypoint_position = self.__waypoints[0]
+        else:
+            next_waypoint_position = target_position
+
+        velocity = vehicle_actor.get_velocity()
+        ang_vel = vehicle_actor.get_angular_velocity()
+        transform = vehicle_actor.get_transform()
+        
+        # Raw Data for Processing
+        raw_obs = {
+            'rgb_data': np.uint8(rgb_image),
+            'position': current_position,
+            'target_position': target_position,
+            'next_waypoint_position': next_waypoint_position,
+            'velocity': np.array([velocity.x, velocity.y, velocity.z], dtype=np.float32),
+            'angular_velocity': np.array([ang_vel.x, ang_vel.y, ang_vel.z], dtype=np.float32),
+            'rotation': np.array([transform.rotation.pitch, transform.rotation.yaw, transform.rotation.roll], dtype=np.float32)
+        }
+        
+        # Cone Detection
+        active_cones = self.__world.get_active_cones()
+        self.current_cone_data = []
+        nearest_cone_loc = None
+        if active_cones:
+            cones_with_dist = []
+            for cone in active_cones:
+                if not cone.is_alive: continue
+                dist = vehicle_loc.distance(cone.get_location())
+                cones_with_dist.append((cone, dist))
+            
+            cones_with_dist.sort(key=lambda x: x[1])
+            if len(cones_with_dist) > 0:
+                nearest_cone_loc = cones_with_dist[0][0].get_location()
+
+            for cone, dist in cones_with_dist[:self.num_cones_to_track]:
+                loc = cone.get_location()
+                self.current_cone_data.append({
+                    'rel_x': loc.x - vehicle_loc.x, 
+                    'rel_y': loc.y - vehicle_loc.y, 
+                    'dist': dist
+                })
+        
+        # Processed Observation
+        self.__observation = self.pre_processing.preprocess_data(
+            raw_obs, 
+            cone_data=self.current_cone_data, 
+            last_action=self.last_action
+        )
+        
+        # Debugging
+        self.debug_manager.show_nn_input(
+            raw_obs['rgb_data'], 
+            self.__observation['rest'],
+            self.last_action
+        )
+        
+        self.debug_manager.draw_dynamic_distances(
+            self.__world.get_world(),
+            vehicle_loc,
+            target_position,
+            nearest_cone_loc
+        )
+        
+        # Refresh the Pygame sensor window every step
+        if self.__show_sensor_data and hasattr(self, 'display'):
+            self.display.play_window_tick()
+        
+        # Reward Aux
+        self.__reward_target_pos = target_position
+        self.__reward_current_pos = current_position
+        self.__reward_next_waypoint_pos = next_waypoint_position
+        self.__reward_speed = 3.6 * velocity.length()
         
         if self.__waypoints and len(self.__waypoints) > 0:
             next_waypoint_position = self.__waypoints[0]

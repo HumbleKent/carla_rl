@@ -13,17 +13,30 @@ Requirements:
 
 class CarlaServer:
     @staticmethod
-    def initialize_server(low_quality = False, offscreen_rendering = False, silent = False, sleep_time = 10):
+    def initialize_server(port=2000, low_quality = False, offscreen_rendering = False, silent = False, sleep_time = 10):
         # Get environment variable CARLA_SERVER that contains the path to the Carla server directory
         carla_server = os.getenv('CARLA_SERVER')
 
+        # Fallback to local path if not set (assuming standard CARLA structure)
+        if carla_server is None:
+            # We are in .../PythonAPI/examples/CARLA-RL-Agents/
+            # Go up 3 levels to get to WindowsNoEditor/
+            candidate = os.path.abspath(os.path.join(os.getcwd(), "..", "..", ".."))
+            if os.path.exists(os.path.join(candidate, "CarlaUE4.exe")) or os.path.exists(os.path.join(candidate, "CarlaUE4.sh")):
+                carla_server = candidate
+                if not silent:
+                    print(f"CARLA_SERVER env var not found. Using detected path: {carla_server}")
+
+        if carla_server is None:
+            raise RuntimeError("Environment variable 'CARLA_SERVER' is not set and could not be detected. Please set it to the CARLA root directory.")
+
         # If it is Unix add the CarlaUE4.sh to the path else add CarlaUE4.exe
         if os.name == 'posix':
-            carla_server = os.path.join(carla_server, 'CarlaUE4.sh')
-            command = f"bash {carla_server} {'--quality-level=Low' if low_quality else ''} {'--RenderOffScreen' if offscreen_rendering else ''}"
+            carla_exe = os.path.join(carla_server, 'CarlaUE4.sh')
+            command = f'bash "{carla_exe}" -carla-rpc-port={port} {"--quality-level=Low" if low_quality else ""} {"--RenderOffScreen" if offscreen_rendering else ""}'
         else:
-            carla_server = os.path.join(carla_server, 'CarlaUE4.exe')
-            command = f"{carla_server} {'--quality-level=Low' if low_quality else ''} {'--RenderOffScreen' if offscreen_rendering else ''}"
+            carla_exe = os.path.join(carla_server, 'CarlaUE4.exe')
+            command = f'"{carla_exe}" -carla-rpc-port={port} {"--quality-level=Low" if low_quality else ""} {"--RenderOffScreen" if offscreen_rendering else ""}'
 
         # Run the command
         if not silent:

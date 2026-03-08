@@ -31,6 +31,9 @@ class Vehicle:
     def get_vehicle(self):
         return self.__vehicle
 
+    def get_world_obj(self):
+        return self.__world
+
     def get_location(self):
         return self.__vehicle.get_location()
 
@@ -46,6 +49,11 @@ class Vehicle:
             return False
         return self.__sensor_dict['collision'].collision_occurred()
 
+    def hit_cone(self):
+        if 'collision' not in self.__sensor_dict:
+            return False
+        return self.__sensor_dict['collision'].hit_cone()
+
     def lane_invasion_occurred(self):
         if 'lane_invasion' not in self.__sensor_dict:
             print("[WARNING] lane_invasion_occurred() called but 'lane_invasion' sensor not in sensor_dict. Returning False.")
@@ -57,6 +65,13 @@ class Vehicle:
         if 'lane_invasion' not in self.__sensor_dict:
             return False
         return self.__sensor_dict['lane_invasion'].solid_line_crossed()
+
+    def reset_step(self):
+        """Resets the flags for the collision and lane invasion sensors."""
+        if 'collision' in self.__sensor_dict:
+            self.__sensor_dict['collision'].reset_step()
+        if 'lane_invasion' in self.__sensor_dict:
+            self.__sensor_dict['lane_invasion'].reset_step()
 
     def spawn_vehicle(self, location=None, rotation=None):
         # Check if the vehicle is already spawned
@@ -304,5 +319,6 @@ class Vehicle:
     def get_speed(self):
         if self.__vehicle is None:
             return 0.0
-        return 3.6 * self.__vehicle.get_velocity().length()
+        velocity = self.__vehicle.get_velocity()
+        return 3.6 * velocity.length()
 

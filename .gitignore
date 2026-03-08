@@ -10,3 +10,4 @@ test_agent.py
 checkpoints/
 tensorboard_cone/
 logs_cone/
+auxi/z
