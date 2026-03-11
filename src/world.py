@@ -47,6 +47,23 @@ class World:
     def get_world(self):
         return self.__world
 
+    def sync_world_handles(self):
+        """Refreshes the internal world reference and all sub-controllers.
+        Must be called after a client.load_world for the world object to remain valid.
+        """
+        self.__world = self.__client.get_world()
+        self.__map_control = MapControl(self.__world, self.__client)
+        self.__weather_control = WeatherControl(self.__world)
+        self.__traffic_control = TrafficControl(self.__world)
+        self.__cone_control = ConeControl(self.__world)
+        self.__map = self.__map_control.get_map()
+        
+        if self.__synchronous_mode:
+            self.__settings = self.__world.get_settings()
+            self.__settings.synchronous_mode = True
+            self.__settings.fixed_delta_seconds = config.SIM_DELTA_SECONDS
+            self.__world.apply_settings(self.__settings)
+
     def destroy_world(self):
         self.destroy_pedestrians()
         self.destroy_vehicles()

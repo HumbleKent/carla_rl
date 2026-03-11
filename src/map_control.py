@@ -34,6 +34,8 @@ class MapControl:
             map_name += f"/{map_name}"
         self.__client.load_world('/Game/Carla/Maps/' + map_name)
         time.sleep(3)
+        # CRITICAL: Must get a fresh world handle after load_world!
+        self.__world = self.__client.get_world()
         self.__map = self.__world.get_map()
 
     # Serves for debugging purposes

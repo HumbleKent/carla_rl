@@ -42,26 +42,42 @@ class DebugManager:
         if not self.is_active(self.WAYPOINTS) or not waypoints:
             return
         
-        for w in waypoints:
+        for i, w in enumerate(waypoints):
             # Handle both carla.Location objects and numpy arrays
             loc = w
             if isinstance(w, np.ndarray):
                 loc = carla.Location(x=float(w[0]), y=float(w[1]), z=float(w[2]))
             
-            world.debug.draw_string(loc, 'O', draw_shadow=False,
-                                   color=carla.Color(r=255, g=0, b=0), 
-                                   life_time=life_time,
-                                   persistent_lines=True)
+            # Small cyan dot for each breadcrumb waypoint
+            world.debug.draw_point(
+                carla.Location(x=loc.x, y=loc.y, z=loc.z + 0.25),
+                size=0.04,
+                color=carla.Color(r=0, g=200, b=255),
+                life_time=life_time
+            )
 
     def draw_target(self, world, target_pos, life_time=120.0):
         if not self.is_active(self.TARGET) or target_pos is None:
             return
             
         loc = carla.Location(x=float(target_pos[0]), y=float(target_pos[1]), z=float(target_pos[2]))
-        world.debug.draw_point(loc, size=0.5, color=carla.Color(r=0, g=255, b=0), life_time=life_time)
-        world.debug.draw_string(loc + carla.Location(z=1.0), 'TARGET', draw_shadow=False,
-                               color=carla.Color(r=0, g=255, b=0), life_time=life_time,
-                               persistent_lines=True)
+        
+        # Large bright green point at ground level
+        world.debug.draw_point(loc, size=0.4, color=carla.Color(r=0, g=255, b=100), life_time=life_time)
+        
+        # Vertical post: line from ground up to 3m
+        top = carla.Location(x=loc.x, y=loc.y, z=loc.z + 3.0)
+        world.debug.draw_line(loc, top, thickness=0.08, color=carla.Color(r=0, g=255, b=100), life_time=life_time)
+        
+        # Label above the post
+        world.debug.draw_string(
+            carla.Location(x=loc.x, y=loc.y, z=loc.z + 3.5),
+            '★ GOAL',
+            draw_shadow=True,
+            color=carla.Color(r=0, g=255, b=100),
+            life_time=life_time,
+            persistent_lines=False
+        )
 
     def draw_dynamic_distances(self, world, ego_loc, target_pos, nearest_cone_loc):
         if not self.is_active(self.TARGET) and not self.is_active(self.WAYPOINTS):

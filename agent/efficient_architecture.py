@@ -33,12 +33,12 @@ class CustomExtractor_PPO_EfficientNet(BaseFeaturesExtractor):
         # Add a Global Average Pooling layer to get a fixed-size vector (1280)
         self.avgpool = nn.AdaptiveAvgPool2d(1)
 
-        # 2. MLP for processing the "Rest" vector (23 features)
-        # Input: 23 (2 nav + 4 kinematics + 2 action + 15 cones)
+        # 2. MLP for processing the "Rest" vector (8 features)
+        # Input: 8 (Velocities, Ang vel, Yaw error, Target dist, Prev action)
         self.rest_model = nn.Sequential(
-            nn.Linear(23, 64),
+            nn.Linear(8, 128),
             nn.ReLU(),
-            nn.Linear(64, 128),
+            nn.Linear(128, 256),
             nn.ReLU()
         )
 

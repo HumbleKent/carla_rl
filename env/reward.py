@@ -20,7 +20,7 @@ class Reward:
         self.countint = 0
 
     # ======================================== Main Reward Function ==========================================================
-    def calculate_reward(self, vehicle: Vehicle, current_pos, target_pos, next_waypoint_pos, speed, cone_data=None, step_count=0, verbose=False, debug_manager=None) -> float:   
+    def calculate_reward(self, vehicle: Vehicle, current_pos, target_pos, next_waypoint_pos, speed, yaw_error=0.0, cone_data=None, step_count=0, verbose=False, debug_manager=None) -> float:   
         target_distance = self.distance(current_pos, target_pos)
         next_waypoint_distance = self.distance(current_pos, next_waypoint_pos)
         
@@ -41,7 +41,7 @@ class Reward:
         distance_reward = 0.0
         if self.prev_target_distance is not None:
             delta = self.prev_target_distance - target_distance
-            distance_reward = delta * 20.0 
+            distance_reward = delta * 10.0 
             
         self.prev_target_distance = target_distance
 
@@ -61,6 +61,9 @@ class Reward:
         target_bonus = self.__target_destination(target_distance, threshold=2.0, verbose=verbose, debug_manager=debug_manager)
         waypoint_reward = self.__waypoint_reached(next_waypoint_distance)
         speed_reward = self.__speed_reward(speed)
+        
+        # Penalizes looking away from the safe path
+        heading_penalty = -abs(yaw_error) * 0.2
 
         # 6. Safety rules
         light_reward = self.__light_pole_trangression(vehicle, verbose=verbose, debug_manager=debug_manager)
@@ -76,6 +79,7 @@ class Reward:
                  stand_still_penalty + \
                  distance_reward + \
                  cone_proximity_penalty + \
+                 heading_penalty + \
                  light_reward + \
                  stop_reward
         
@@ -155,7 +159,7 @@ class Reward:
         if speed < 1.0:
             # Increased to -10.0 to make it extremely painful to stay still.
             # This forces the agent to explore even if it's scared of cones.
-            return -5.0
+            return -1.0
         return 0.0
  
     def __proximity_cone_penalty(self, cone_data, safe_distance=3.0):
@@ -189,15 +193,13 @@ class Reward:
         
     def __waypoint_reached(self, next_waypoint_distance, threshold=1.0):
         '''
-        Rewards the agent for hitting a waypoint.
+        Waypoints are popped to update the heading guidance (breadcrumbs), 
+        but we no longer give an explicit reward for hitting them.
         '''
         if next_waypoint_distance < threshold:
             if self.waypoints:
                 self.waypoints.pop(0)
-            
-            ### CHANGED: Increased from 2.0 to 5.0 to give a stronger "breadcrumb" signal 
-            ### that following the path is highly desirable.
-            return 5.0
+            return 0.0
         else:
             return 0.0
         
@@ -266,6 +268,7 @@ class Reward:
         for stop_sign in stop_signs_on_same_road:
             if vehicle.get_speed() < 1.0:
                 self.has_stopped = True
+        return 0.0
         
     # ==================================== Helper Functions ================================================================
     def distance(self, a, b):

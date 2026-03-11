@@ -12,16 +12,16 @@ import gymnasium as gym
 import numpy as np
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import SubprocVecEnv, VecTransposeImage, DummyVecEnv
-from stable_baselines3.common.callbacks import CheckpointCallback, EvalCallback, CallbackList
+from stable_baselines3.common.callbacks import CheckpointCallback, BaseCallback, CallbackList
+from stable_baselines3.common.evaluation import evaluate_policy
 from stable_baselines3.common.monitor import Monitor
 from gymnasium.envs.registration import register
 
 import configuration as config
 from env.environment import CarlaEnv
-from agent.cone_architecture import CustomExtractor_PPO_Cone
+from agent.efficient_architecture import CustomExtractor_PPO_EfficientNet
 from src.world import World
 
-# Register the environment if not already
 # Register the environment if not already
 try:
     register(
@@ -32,50 +32,151 @@ try:
 except Exception:
     pass
 
-class EpisodeEvalCallback(EvalCallback):
-    def __init__(self, env, eval_ep_freq, save_ep_freq, log_path, save_path, n_eval_episodes=5, deterministic=True, render=False):
-        # We set eval_freq to a very large number so the parent class doesn't trigger it via steps
-        super().__init__(env, best_model_save_path=log_path, log_path=log_path, eval_freq=int(1e12), 
-                         n_eval_episodes=n_eval_episodes, deterministic=deterministic, render=render)
+class EpisodeEvalCallback(BaseCallback):
+    def __init__(self, eval_port, eval_ep_freq, save_ep_freq, log_path, save_path, n_eval_episodes=5, deterministic=True, initial_episode=0):
+        super().__init__(verbose=1)
+        self.eval_port = eval_port
         self.eval_ep_freq = eval_ep_freq
         self.save_ep_freq = save_ep_freq
+        self.log_path = log_path
         self.save_path = save_path
-        self.episodes_finished = 0
+        self.n_eval_episodes = n_eval_episodes
+        self.deterministic = deterministic
+        self.initial_episode = initial_episode
+        self.episodes_finished = initial_episode
+        self.local_episodes = 0
+        self.best_mean_reward = -np.inf
         self.eval_results = []
         self.episode_log = []
+        self.eval_server_process = None
+        self.evaluations_timesteps = []
+        self.evaluations_results = []
+        self.evaluations_length = []
 
     def _on_step(self) -> bool:
-        # local 'dones' is an array of booleans for each parallel environment
+        # Check termination and logic...
         for idx, done in enumerate(self.locals['dones']):
             if done:
                 self.episodes_finished += 1
-                
-                # Fetch episode info from Monitor wrapper
+                self.local_episodes += 1
                 info = self.locals['infos'][idx]
+                scenario = info.get('scenario_name', 'Unknown')
+                port = info.get('port', 'Unknown')
                 if 'episode' in info:
-                    ep_rew = info['episode']['r']
-                    ep_len = info['episode']['l']
-                    scenario = info.get('scenario_name', 'Unknown')
-                    print(f"[Worker {idx}] Episode {self.episodes_finished} finished! Status: {scenario} | Reward: {ep_rew:.2f} | Steps: {ep_len}")
-                
-                # Trigger evaluation every N episodes
+                    print(f"  [EPISODE] {self.local_episodes} (Global: {self.episodes_finished}) [Port {port}] finished! Status: {scenario} | R: {info['episode']['r']:.1f}")
+
+                # LAZY EVALUATION TRIGGER
                 if self.episodes_finished % self.eval_ep_freq == 0:
-                    print(f"\n[Eval] {self.episodes_finished} episodes completed. Starting evaluation...")
-                    time.sleep(1.0) # Small jitter to avoid simultaneous resets on shared port
+                    print(f"\n>>>> Starting EVALUATION on Port: {self.eval_port}...")
                     
-                    # Force parent evaluation logic by temporarily setting freq to 1
-                    # (since any number % 1 == 0, it always triggers)
-                    self.eval_freq = 1 
-                    super()._on_step()
-                    self.eval_freq = int(1e12) 
+                    from src.server import CarlaServer
+                    # 1. Ephemeral Server Launch (if separate)
+                    # We check if something is already there first to be safe, but launch if not
+                    self.eval_server_process = None
+                    try:
+                        # Try to connect to see if one is already running
+                        c = carla.Client('127.0.0.1', self.eval_port)
+                        c.set_timeout(2.0)
+                        c.get_world()
+                        print(f">>>> Using existing CARLA server on port {self.eval_port}")
+                    except:
+                        print(f">>>> Launching ephemeral EVAL server on port {self.eval_port}...")
+                        self.eval_server_process = CarlaServer.initialize_server(
+                            port=self.eval_port, 
+                            low_quality=True, 
+                            offscreen_rendering=True, 
+                            sleep_time=15
+                        )
 
-                    self.eval_results.append(self.last_mean_reward)
-                    self.episode_log.append(self.episodes_finished)
+                    # Create and Close Eval Env (Lazy)
+                    try:
+                        import carla
+                        # 1. Setup port 4000 (Spawn cones)
+                        temp_client = carla.Client('127.0.0.1', self.eval_port)
+                        temp_client.set_timeout(15.0)
+                        settings = temp_client.get_world().get_settings()
+                        was_sync = settings.synchronous_mode
+                        
+                        settings.synchronous_mode = False # ensure off for setup
+                        temp_client.get_world().apply_settings(settings)
+                        temp_client.reload_world(reset_settings=False)
+                        
+                        from src.world import World as SetupWorld
+                        sw = SetupWorld(client=temp_client, synchronous_mode=True)
+                        sw.spawn_cones_from_json()
+                        temp_client.get_world().tick()
+                        
+                        # 2. Create the Env for stable_baselines
+                        eval_env = DummyVecEnv([lambda: Monitor(gym.make('carla-rl-gym-v0', 
+                                                                         port=self.eval_port,
+                                                                         time_limit=30,
+                                                                         initialize_server=False,
+                                                                         synchronous_mode=True,
+                                                                         spawn_cones=True,
+                                                                         is_eval=True,
+                                                                         verbose=False,
+                                                                         debug_features=['target']))])
+                        eval_env = VecTransposeImage(eval_env)
+                        
+                        # 3. RUN EVALUATION
+                        episode_rewards, episode_lengths = evaluate_policy(
+                            self.model, 
+                            eval_env, 
+                            n_eval_episodes=self.n_eval_episodes, 
+                            deterministic=self.deterministic,
+                            return_episode_rewards=True
+                        )
+                        mean_reward = np.mean(episode_rewards)
+                        std_reward = np.std(episode_rewards)
+                        print(f">>>> EVAL COMPLETE. Mean Reward: {mean_reward:.2f} +/- {std_reward:.2f}")
 
-                # TRIGGER CHECKPOINT every N episodes
+                        # 4. Save best model
+                        if mean_reward > self.best_mean_reward:
+                             self.best_mean_reward = mean_reward
+                             self.model.save(os.path.join(self.log_path, "best_model.zip"))
+                        
+                        # Add to Tensorboard
+                        self.logger.record("eval/mean_reward", float(mean_reward))
+                        self.logger.record("eval/std_reward", float(std_reward))
+                        self.logger.dump(step=self.num_timesteps)
+
+                        # Store results for .npz
+                        self.evaluations_timesteps.append(self.num_timesteps)
+                        self.evaluations_results.append(episode_rewards)
+                        self.evaluations_length.append(episode_lengths)
+
+                        np.savez(
+                            os.path.join(self.log_path, "evaluations.npz"),
+                            timesteps=self.evaluations_timesteps,
+                            results=self.evaluations_results,
+                            ep_lengths=self.evaluations_length,
+                        )
+                        
+                        # 5. CLOSE and Clean (Release port 4000)
+                        eval_env.close()
+                        
+                        # 6. Shut down ephemeral server
+                        if self.eval_server_process:
+                            print(f">>>> Closing ephemeral EVAL server on port {self.eval_port}...")
+                            CarlaServer.close_server(self.eval_server_process)
+                            self.eval_server_process = None
+                            
+                        print(f">>>> Evaluation cycle on Port {self.eval_port} finished.\n")
+                        
+                    except Exception as e:
+                        print(f">>>> [ERROR] Evaluation on port {self.eval_port} failed: {e}")
+                        # Ensure cleanup if failed
+                        if self.eval_server_process:
+                             try: CarlaServer.close_server(self.eval_server_process)
+                             except: pass
+                             self.eval_server_process = None
+                        import traceback
+                        traceback.print_exc()
+
+                # Trigger checkpoint every N episodes
                 if self.save_ep_freq > 0 and self.episodes_finished % self.save_ep_freq == 0:
                     path = os.path.join(self.save_path, f"ppo_ep{self.episodes_finished}.zip")
-                    print(f"[Checkpoint] Saving model to {path}")
+                    print(f"  [Checkpoint] Saving model to {path}")
                     self.model.save(path)
         
         return True
@@ -96,8 +197,8 @@ def make_env(port, rank=0, spawn_cones=False):
                            synchronous_mode=True, 
                            show_sensor_data=False,  # Disabled: subprocesses can't display Pygame windows
                            spawn_cones=True,
-                           verbose=False,
-                           action_jitter=0.0)
+                           verbose=worker_verbose,
+                           debug_features=[])
             
             with open(log_file, "a") as f: f.write(f"gym.make succeeded. Calling env.reset()...\n"); f.flush()
             env.reset(seed=int(time.time()) + rank)
@@ -131,8 +232,9 @@ def make_eval_env(port):
                        synchronous_mode=True,
                        show_sensor_data=False,  # Disabled: eval env also runs in subprocess during training
                        spawn_cones=True,
-                       verbose=False,
-                       action_jitter=0.0)  # No jitter during eval
+                       verbose=worker_verbose,
+                       debug_features=[],
+                       is_eval=True)  # No jitter during eval
         env = Monitor(env)
         return env
     return _init
@@ -153,13 +255,16 @@ def main():
     parser.add_argument("--eval-ep-freq", type=int, default=25, help="Number of episodes between evaluations")
     parser.add_argument("--save-ep-freq", type=int, default=50, help="Number of episodes between model checkpoints")
     parser.add_argument("--total-steps", type=int, default=1000000, help="Total timesteps to train for")
+    parser.add_argument("--eval-port", type=int, default=4000, help="Dedicated port for evaluation (optional)")
     args = parser.parse_args()
 
+
+    worker_verbose = False
     print(f"Starting training on ports {args.ports} with run name '{args.run_name}'")
 
     # CUDA Check
     import torch
-
+    # ... rest of CUDA check code ...
     print(f"CUDA Available: {torch.cuda.is_available()}")
     if torch.cuda.is_available():
         print(f"Current Device: {torch.cuda.get_device_name(0)}")
@@ -169,20 +274,27 @@ def main():
         device = "cpu"
 
     # 1. PRE-CHECK: Ensure CARLA servers are reachable and SPAWN CONES
-    for port in args.ports:
+    setup_ports = list(args.ports)
+
+    for port in setup_ports:
         print(f"Connecting to CARLA on 127.0.0.1:{port} for setup...")
         time.sleep(1)
         try:
             client = carla.Client('127.0.0.1', port)
             client.set_timeout(15.0)
+            
+            # Clear out any old debug markers from previous runs (like plan_waypoints.py)
+            print(f"Reloading world on port {port} to clear old debug markers...")
+            client.reload_world(reset_settings=False)
+            
             # Create a temporary World to spawn cones
-            world_obj = World(client=client, synchronous_mode=True)
+            from src.world import World as SetupWorld
+            world_obj = SetupWorld(client=client, synchronous_mode=True)
             world_obj.spawn_cones_from_json()
             # Tick once to ensure they are registered
             client.get_world().tick()
             
             # CRITICAL: Turn OFF synchronous mode before this client disconnects!
-            # Otherwise, the CARLA server will hang indefinitely waiting for a tick.
             settings = client.get_world().get_settings()
             settings.synchronous_mode = False
             client.get_world().apply_settings(settings)
@@ -196,9 +308,36 @@ def main():
     print("Creating training environments...")
 
     if len(args.ports) > 1:
-        env = SubprocVecEnv([make_env_with_delay(p, i) for i, p in enumerate(args.ports)])
+        def make_env_wrapper(p, i):
+            def _init():
+                try:
+                    time.sleep(i * 2.5) # Staggered startup
+                    return Monitor(gym.make('carla-rl-gym-v0', 
+                                   port=p, 
+                                   time_limit=30, 
+                                   initialize_server=False, 
+                                   synchronous_mode=True, 
+                                   show_sensor_data=False,
+                                   spawn_cones=True,
+                                   verbose=worker_verbose,
+                                   debug_features=[]))
+                except Exception as e:
+                    print(f"FAILED to create environment on port {p}: {e}")
+                    raise
+            return _init
+        
+        env = SubprocVecEnv([make_env_wrapper(p, i) for i, p in enumerate(args.ports)])
     else:
-        env = DummyVecEnv([make_env(port=args.ports[0], spawn_cones=False)])
+        # For single port, no delay needed
+        env = DummyVecEnv([lambda: Monitor(gym.make('carla-rl-gym-v0', 
+                                                   port=args.ports[0], 
+                                                   time_limit=30, 
+                                                   initialize_server=False, 
+                                                   synchronous_mode=True, 
+                                                   show_sensor_data=False,
+                                                   spawn_cones=True,
+                                                   verbose=worker_verbose,
+                                                   debug_features=[]))])
     
     env = VecTransposeImage(env)
 
@@ -212,9 +351,10 @@ def main():
 
     # 4. MODEL
     print("Initializing model...")
-    policy_kwargs = dict(features_extractor_class=CustomExtractor_PPO_Cone)
+    policy_kwargs = dict(features_extractor_class=CustomExtractor_PPO_EfficientNet)
     if args.load_path and os.path.exists(args.load_path):
         model = PPO.load(args.load_path, env=env, device=device, custom_objects={"tensorboard_log": tensorboard_dir})
+        model.batch_size = 128 # Explicitly update batch size when loading
     else:
         model = PPO(
             "MultiInputPolicy",
@@ -223,27 +363,28 @@ def main():
             verbose=1,
             tensorboard_log=tensorboard_dir,
             n_steps=1024,
-            batch_size=64,
+            batch_size=128,
             device=device
         )
 
-    # 5. CALLBACKS (Both Eval and Saving are now done in one episode-based callback)
-    # Use the LAST port for evaluation, NOT the first.
-    # Port 0 (e.g. 2000) is already occupied by Worker 0's training subprocess.
-    # Connecting a second eval env to the same port kills Worker 0's vehicle mid-episode,
-    # causing it to silently stall and never log episodes again.
-    # Using the last port means only Worker N-1 pauses briefly during eval — it recovers fine.
-    eval_port = args.ports[-1]
-    print(f"Creating dedicated eval env on port {eval_port}...")
-    eval_env = DummyVecEnv([make_eval_env(eval_port)])
-    eval_env = VecTransposeImage(eval_env)
-    
+    import re
+    initial_episode = 0
+    if args.load_path:
+        # Try to extract episode number from filename (e.g., ppo_ep1650.zip)
+        match = re.search(r"ep(\d+)", os.path.basename(args.load_path))
+        if match:
+            initial_episode = int(match.group(1))
+            print(f"Resuming training from episode {initial_episode}")
+
+    # 5. CALLBACKS
+    eval_port = args.eval_port if args.eval_port else args.ports[-1]
     callback = EpisodeEvalCallback(
-        eval_env, 
+        eval_port=eval_port, 
         eval_ep_freq=args.eval_ep_freq, 
         save_ep_freq=args.save_ep_freq,
         log_path=log_dir,
-        save_path=checkpoint_dir
+        save_path=checkpoint_dir,
+        initial_episode=initial_episode
     )
 
     # 6. LEARN
@@ -251,6 +392,10 @@ def main():
         model.learn(total_timesteps=args.total_steps, callback=callback)
     except KeyboardInterrupt:
         print("\nTraining interrupted by user.")
+    except Exception as e:
+        print(f"\nCRITICAL FAILURE during training: {e}")
+        import traceback
+        traceback.print_exc()
     finally:
         print("Closing environment and cleaning up...")
         try:
@@ -266,24 +411,15 @@ def main():
                 client.set_timeout(5.0)
                 world = client.get_world()
                 
-                # Turn off sync mode to ensure actors are destroyed immediately
+                # Turn off sync mode before clearing and reloading
                 settings = world.get_settings()
                 settings.synchronous_mode = False
                 settings.fixed_delta_seconds = None
                 world.apply_settings(settings)
                 
+                # Reloading the world is the only way in CARLA to clear persistent debug markers
+                client.reload_world(reset_settings=False)
                 
-                actors = world.get_actors()
-                to_destroy = []
-                to_destroy.extend(list(actors.filter('vehicle.*')))
-                to_destroy.extend(list(actors.filter('sensor.*')))
-                to_destroy.extend(list(actors.filter('walker.*')))
-                to_destroy.extend(list(actors.filter('static.prop.constructioncone')))
-                
-                batch = [carla.command.DestroyActor(x) for x in to_destroy]
-                client.apply_batch(batch)
-                
-                time.sleep(1) # Give time for destruction
                 print(f"Cleanup finished on port {port}")
             except Exception as e:
                 print(f"Failed to cleanup port {port}: {e}")

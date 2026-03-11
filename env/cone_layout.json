@@ -1,6 +1,6 @@
 [
     {
-        "_scenario": "Lane Closure (sudden squeeze)",
+        "_scenario": "Lane Guidance",
         "x": -100.28794860839844,
         "y": -140.3681182861328
     },
@@ -310,7 +310,7 @@
         "y": 7.968270874
     },
     {
-        "_scenario": "Lane Change 1",
+        "_scenario": "Lane Change to Left",
         "x": 36.82,
         "y": 56.98
     },
@@ -383,7 +383,7 @@
         "y": 31.42
     },
     {
-        "_scenario": "Lane Change 2",
+        "_scenario": "Lane Change to Right",
         "x": 30.77,
         "y": -59.5
     },

@@ -15,11 +15,11 @@ from src.display import Display
 from env.reward import Reward
 from env.observation_action_space import (
     observation_space, 
-    action_space, 
-    situations_map
+    action_space
 )
 from env.pre_processing import PreProcessing
 from src.debug_manager import DebugManager
+from src.route_planner import AdvancedRoutePlanner
 
 register(
     id="carla-rl-gym-v0",
@@ -34,7 +34,7 @@ class CarlaEnv(gym.Env):
     def __init__(self, scenarios=[], time_limit=60, initialize_server=False, 
                  random_weather=False, random_traffic=False, synchronous_mode=True, 
                  show_sensor_data=False, has_traffic=True, verbose=True, 
-                 spawn_cones=True, port=None, action_jitter=0.0, is_eval=False,
+                 spawn_cones=True, port=None, is_eval=False,
                  debug_features=[]):
         super().__init__()
         
@@ -48,7 +48,6 @@ class CarlaEnv(gym.Env):
         self.__automatic_server_initialization = initialize_server
         self.__cones_spawned = False
         self.__spawn_cones = spawn_cones 
-        self.__action_jitter = action_jitter
         self.__is_eval = is_eval
         
         # Debugging
@@ -73,11 +72,10 @@ class CarlaEnv(gym.Env):
         self.action_space = action_space
         
         # 4. State variables
-        self.__active_scenario_name = None
-        self.__active_scenario_dict = None
-        self.__waypoints = None
-        self.__situations_map = situations_map
-        self.__episode_number = 0
+        self._active_scenario_name = None
+        self._active_scenario_dict = None
+        self._waypoints = None
+
         self.__episode_number = 0
         self.__truncated = False
         self.last_action = np.array([0.0, 0.0], dtype=np.float32)
@@ -85,6 +83,14 @@ class CarlaEnv(gym.Env):
         self.num_cones_to_track = 5
         
         self.__cone_config = self.__load_cone_config()
+        self.__route_planner = AdvancedRoutePlanner(
+            self.__world.get_world(), 
+            sampling_res=config.ENV_WAYPOINT_SPACING,
+            cone_threshold=config.ENV_CONE_THRESHOLD,
+            verbose=False
+        )
+        if self.__cone_config:
+            self.__route_planner.set_cones(self.__cone_config)
 
     def __load_cone_config(self):
         try:
@@ -98,22 +104,36 @@ class CarlaEnv(gym.Env):
         
         # Select Scenario
         if options and 'scenario_name' in options:
-            self.__active_scenario_name = options['scenario_name']
+            self._active_scenario_name = options['scenario_name']
         else:
-            self.__active_scenario_name = self.__chose_situation(seed)
+            self._active_scenario_name = self.__chose_situation(seed)
         
         if self.__verbose:
-            print(f"[Port {self.__port}] Loading scenario {self.__active_scenario_name}...")
+            print(f"[Port {self.__port}] Loading scenario {self._active_scenario_name}...")
             
-        self.load_scenario(self.__active_scenario_name, seed)
+        self.load_scenario(self._active_scenario_name, seed)
+        
+        # Initialize target position for debugging and rewards
+        self._reward_target_pos = np.array([
+            self._active_scenario_dict['target_position']['x'], 
+            self._active_scenario_dict['target_position']['y'], 
+            self._active_scenario_dict['target_position']['z']
+        ], dtype=np.float32)
+        
         self.place_spectator_above_vehicle()
         
         # Pathfinding
-        waypoints_locations = self.get_path_waypoints(spacing=config.ENV_WAYPOINT_SPACING)
-        self.debug_manager.draw_waypoints(self.__world.get_world(), waypoints_locations)
-        self.debug_manager.draw_target(self.__world.get_world(), self.__reward_target_pos)
+        s_pos = self._active_scenario_dict['initial_position']
+        start_loc = carla.Location(x=s_pos['x'], y=s_pos['y'], z=s_pos['z'])
+        waypoints_locations = self.get_path_waypoints(spacing=config.ENV_WAYPOINT_SPACING, start_loc=start_loc)
+        if self.__verbose:
+            print(f"[Port {self.__port}] Generated {len(waypoints_locations)} waypoints.")
         
-        self.__waypoints = [np.array([w.x, w.y, w.z]) for w in waypoints_locations]
+        self._waypoints = [np.array([w.x, w.y, w.z]) for w in waypoints_locations]
+        
+        # Draw full planned route at episode start (long lifetime so whole path is visible)
+        self.debug_manager.draw_waypoints(self.__world.get_world(), self._waypoints, life_time=30.0)
+        self.debug_manager.draw_target(self.__world.get_world(), self._reward_target_pos, life_time=30.0)
         
         # Wait for sensors
         waited = 0
@@ -123,7 +143,8 @@ class CarlaEnv(gym.Env):
             waited += 1
             
         self._update_observation()
-        self.__reward_func.reset(self.__waypoints)
+        self.__reward_func.reset(self._waypoints)
+
         self.__episode_number += 1
         self.__start_timer()
         self.number_of_steps = 0
@@ -132,7 +153,7 @@ class CarlaEnv(gym.Env):
         if self.__spawn_cones:
             self.__spawn_all_cones()
             
-        info = {'scenario_name': self.__active_scenario_name, 'waypoints': self.__waypoints}
+        info = {'scenario_name': self._active_scenario_name, 'waypoints': self._waypoints}
         return self.__observation, info
 
     def render(self, mode='human'):
@@ -157,10 +178,6 @@ class CarlaEnv(gym.Env):
         
         # Control
         action_array = np.array(action)
-        if self.__action_jitter > 0.0:
-            noise = np.random.normal(0, self.__action_jitter, size=action_array.shape)
-            action_array = np.clip(action_array + noise, -1.0, 1.0)
-        
         self.__vehicle.control_vehicle(action_array)
 
         # Update
@@ -170,10 +187,11 @@ class CarlaEnv(gym.Env):
         # Reward
         reward = self.__reward_func.calculate_reward(
             self.__vehicle, 
-            self.__reward_current_pos, 
-            self.__reward_target_pos, 
-            self.__reward_next_waypoint_pos, 
-            speed=self.__reward_speed,
+            self._reward_current_pos, 
+            self._reward_target_pos, 
+            self._reward_next_waypoint_pos, 
+            speed=self._reward_speed,
+            yaw_error=self.__current_yaw_error,
             cone_data=self.current_cone_data,
             step_count=self.number_of_steps,
             verbose=self.__verbose,
@@ -181,7 +199,13 @@ class CarlaEnv(gym.Env):
         )
         
         terminated = self.__reward_func.get_terminated()
-        self.__waypoints = self.__reward_func.get_waypoints()
+        self._waypoints = self.__reward_func.get_waypoints()
+        
+        # Dynamic rendering of remaining waypoints + target with short lifetime
+        # This refreshes every step so waypoints "consume" as the agent progresses
+        if self._waypoints:
+            self.debug_manager.draw_waypoints(self.__world.get_world(), self._waypoints, life_time=0.2)
+        self.debug_manager.draw_target(self.__world.get_world(), self._reward_target_pos, life_time=0.2)
         
         # Use exact step count instead of wall-clock time for reproducible RL episodes
         self.__truncated = (self.number_of_steps >= config.ENV_MAX_STEPS)
@@ -191,11 +215,24 @@ class CarlaEnv(gym.Env):
             if self.__vehicle.collision_occurred(): reason = "CRASH (Collision)"
             elif self.__vehicle.lane_invasion_occurred(): reason = "OFF-ROAD (Lane Invasion)"
             
-            print(f"[Port {self.__port}] Episode {self.__episode_number} End | Reason: {reason} | Score: {self.__reward_func.get_total_ep_reward():.2f}")
+            # If reward function has a more specific reason, use it
+            reward_reason = self.__reward_func.get_termination_reason()
+            if reward_reason != "None":
+                reason = reward_reason
+
+            if self.__verbose:
+                print(f"[Port {self.__port}] Episode {self.__episode_number} End | Reason: {reason} | Score: {self.__reward_func.get_total_ep_reward():.2f}")
             self.clean_scenario()
+        else:
+            reason = "None"
         
         self.last_action = np.array(action, dtype=np.float32)
-        info = {'scenario_name': self.__active_scenario_name, 'waypoints': self.__waypoints}
+        info = {
+            'scenario_name': self._active_scenario_name, 
+            'waypoints': self._waypoints, 
+            'port': self.__port,
+            'termination_reason': reason
+        }
         
         return self.__observation, reward, terminated, self.__truncated, info
 
@@ -210,13 +247,13 @@ class CarlaEnv(gym.Env):
         vehicle_loc = vehicle_actor.get_location()
         current_position = np.array([vehicle_loc.x, vehicle_loc.y, vehicle_loc.z])
         target_position = np.array([
-            self.__active_scenario_dict['target_position']['x'], 
-            self.__active_scenario_dict['target_position']['y'], 
-            self.__active_scenario_dict['target_position']['z']
+            self._active_scenario_dict['target_position']['x'], 
+            self._active_scenario_dict['target_position']['y'], 
+            self._active_scenario_dict['target_position']['z']
         ])
         
-        if self.__waypoints and len(self.__waypoints) > 0:
-            next_waypoint_position = self.__waypoints[0]
+        if self._waypoints and len(self._waypoints) > 0:
+            next_waypoint_position = self._waypoints[0]
         else:
             next_waypoint_position = target_position
 
@@ -259,7 +296,8 @@ class CarlaEnv(gym.Env):
                 })
         
         # Processed Observation
-        self.__observation = self.pre_processing.preprocess_data(
+        # Now returns both the observation and the raw yaw_error.
+        self.__observation, self.__current_yaw_error = self.pre_processing.preprocess_data(
             raw_obs, 
             cone_data=self.current_cone_data, 
             last_action=self.last_action
@@ -272,78 +310,22 @@ class CarlaEnv(gym.Env):
             self.last_action
         )
         
-        self.debug_manager.draw_dynamic_distances(
-            self.__world.get_world(),
-            vehicle_loc,
-            target_position,
-            nearest_cone_loc
-        )
+        # self.debug_manager.draw_dynamic_distances(
+        #     self.__world.get_world(),
+        #     vehicle_loc,
+        #     target_position,
+        #     nearest_cone_loc
+        # )
         
         # Refresh the Pygame sensor window every step
         if self.__show_sensor_data and hasattr(self, 'display'):
             self.display.play_window_tick()
         
         # Reward Aux
-        self.__reward_target_pos = target_position
-        self.__reward_current_pos = current_position
-        self.__reward_next_waypoint_pos = next_waypoint_position
-        self.__reward_speed = 3.6 * velocity.length()
-        
-        if self.__waypoints and len(self.__waypoints) > 0:
-            next_waypoint_position = self.__waypoints[0]
-        else:
-            next_waypoint_position = target_position
-
-        velocity = vehicle_actor.get_velocity()
-        ang_vel = vehicle_actor.get_angular_velocity()
-        transform = vehicle_actor.get_transform()
-        
-        # Raw Data for Processing
-        raw_obs = {
-            'rgb_data': np.uint8(rgb_image),
-            'position': current_position,
-            'target_position': target_position,
-            'next_waypoint_position': next_waypoint_position,
-            'velocity': np.array([velocity.x, velocity.y, velocity.z], dtype=np.float32),
-            'angular_velocity': np.array([ang_vel.x, ang_vel.y, ang_vel.z], dtype=np.float32),
-            'rotation': np.array([transform.rotation.pitch, transform.rotation.yaw, transform.rotation.roll], dtype=np.float32)
-        }
-        
-        # Cone Detection
-        active_cones = self.__world.get_active_cones()
-        self.current_cone_data = []
-        if active_cones:
-            cones_with_dist = []
-            for cone in active_cones:
-                if not cone.is_alive: continue
-                dist = vehicle_loc.distance(cone.get_location())
-                cones_with_dist.append((cone, dist))
-            
-            cones_with_dist.sort(key=lambda x: x[1])
-            for cone, dist in cones_with_dist[:self.num_cones_to_track]:
-                loc = cone.get_location()
-                self.current_cone_data.append({
-                    'rel_x': loc.x - vehicle_loc.x, 
-                    'rel_y': loc.y - vehicle_loc.y, 
-                    'dist': dist
-                })
-        
-        # Processed Observation
-        self.__observation = self.pre_processing.preprocess_data(
-            raw_obs, 
-            cone_data=self.current_cone_data, 
-            last_action=self.last_action
-        )
-        
-        # Refresh the Pygame sensor window every step
-        if self.__show_sensor_data and hasattr(self, 'display'):
-            self.display.play_window_tick()
-        
-        # Reward Aux
-        self.__reward_target_pos = target_position
-        self.__reward_current_pos = current_position
-        self.__reward_next_waypoint_pos = next_waypoint_position
-        self.__reward_speed = 3.6 * velocity.length()
+        self._reward_target_pos = target_position
+        self._reward_current_pos = current_position
+        self._reward_next_waypoint_pos = next_waypoint_position
+        self._reward_speed = 3.6 * velocity.length()
 
     def close(self):
         self.__vehicle.destroy_vehicle()
@@ -362,8 +344,8 @@ class CarlaEnv(gym.Env):
             scenario_name = self.__choose_random_situation(seed)
             scenario_dict = self.situations_dict[scenario_name]
             
-        self.__active_scenario_name = scenario_name
-        self.__active_scenario_dict = scenario_dict
+        self._active_scenario_name = scenario_name
+        self._active_scenario_dict = scenario_dict
         
         self.__load_world(scenario_dict['map_name'])
         self.__world.update_traffic_map()
@@ -396,6 +378,10 @@ class CarlaEnv(gym.Env):
     
     def __load_world(self, name):
         self.__world.set_active_map(name)
+        # Refresh all internal handles (World, Controllers, and Mapper)
+        self.__world.sync_world_handles()
+        if hasattr(self, '__route_planner'):
+            self.__route_planner.update_map(self.__world.get_world())
 
     def __spawn_vehicle(self, s_dict):
         location = (s_dict['initial_position']['x'], s_dict['initial_position']['y'], s_dict['initial_position']['z'])
@@ -439,18 +425,18 @@ class CarlaEnv(gym.Env):
             self.__world.set_active_weather_preset(weather_name)
 
     def __spawn_traffic(self, seed):
-        if not self.__random_traffic and self.__active_scenario_dict.get('traffic_density') == 'None':
+        if not self.__random_traffic and self._active_scenario_dict.get('traffic_density') == 'None':
             return
         
         if not self.__random_traffic:
-            random.seed(self.__active_scenario_name)
-            seed = self.__active_scenario_name
+            random.seed(self._active_scenario_name)
+            seed = self._active_scenario_name
         
         if seed is not None:
             random.seed(seed)
         
         if not self.__random_traffic:
-            density = self.__active_scenario_dict.get('traffic_density', 'Low')
+            density = self._active_scenario_dict.get('traffic_density', 'Low')
             num_vehicles = random.randint(1, 5) if density == 'Low' else random.randint(10, 20)
         else:
             num_vehicles = random.randint(1, 20)
@@ -475,22 +461,38 @@ class CarlaEnv(gym.Env):
         self.__cones_spawned = True
         self.__world.tick()
 
-    def get_path_waypoints(self, spacing=5.0):
-        curr_wp = self.__world.get_map().get_waypoint(self.__vehicle.get_location())
-        target_loc = carla.Location(
-            x=self.__active_scenario_dict['target_position']['x'], 
-            y=self.__active_scenario_dict['target_position']['y'], 
-            z=self.__active_scenario_dict['target_position']['z']
-        )
-        target_wp = self.__world.get_map().get_waypoint(target_loc)
+    def get_path_waypoints(self, spacing=2.0, start_loc=None):
+        """
+        Plans a route that avoids cones using the AdvancedRoutePlanner.
+        """
+        if start_loc is None:
+            start_loc = self.__vehicle.get_location()
         
-        waypoints = []
-        while curr_wp.transform.location.distance(target_wp.transform.location) > spacing and len(waypoints) < 500:
-            waypoints.append(curr_wp.transform.location)
-            next_wps = curr_wp.next(spacing)
-            if not next_wps: break
-            curr_wp = next_wps[0]
-        return waypoints[1:]
+        target_loc = carla.Location(
+            x=self._active_scenario_dict['target_position']['x'], 
+            y=self._active_scenario_dict['target_position']['y'], 
+            z=self._active_scenario_dict['target_position']['z']
+        )
+        
+        # Freshly check if cones are available to avoid them in planning
+        # We also pass the cone configuration to the planner in case it changed
+        if self.__cone_config:
+            self.__route_planner.set_cones(self.__cone_config)
+            
+        waypoints = self.__route_planner.plan_route(
+            start_loc, 
+            target_loc, 
+            avoid_cones=True,
+            verbose=self.__verbose
+        )
+        
+        if self.__verbose:
+            print(f"[Port {self.__port}] Planner returned {len(waypoints)} points.")
+            
+        # Return as locations list
+        if len(waypoints) > 1:
+            return waypoints[1:] # Skip the first one as it's at the car's current pose
+        return waypoints
 
     def get_vehicle(self):
         return self.__vehicle

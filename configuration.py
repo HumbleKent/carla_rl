@@ -26,5 +26,6 @@ SIM_FPS                 = 20
 # Environment attributes
 ENV_SCENARIOS_FILE      = 'env/vehicle_spawn.json'
 ENV_MAX_STEPS           = 2400 # Max number of steps per episode. I suggest running the helpfull-scipts/check_max_num_steps.py script to get your number
-ENV_WAYPOINT_SPACING    = 7.0
+ENV_WAYPOINT_SPACING    = 2.0
 ENV_CONE_LAYOUT_FILE    = 'env/cone_layout.json'
+ENV_CONE_THRESHOLD      = 2.2

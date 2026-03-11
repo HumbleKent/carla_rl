@@ -51,9 +51,9 @@ def main():
                        time_limit=120, 
                        initialize_server=False, 
                        synchronous_mode=True, 
-                       show_sensor_data=True, 
+                       show_sensor_data=False, 
                        spawn_cones=True, 
-                       verbose=True)
+                       verbose=False)
         return env
 
     env = DummyVecEnv([make_env])
@@ -74,40 +74,64 @@ def main():
     print(f"Starting evaluation for {args.episodes} episodes...")
 
     # 5. Evaluation Loop
+    eval_stats = []
     try:
         for episode in range(1, args.episodes + 1):
             obs = env.reset()
             done = False
             total_reward = 0
             steps = 0
-            
-            print(f"\n--- Episode {episode} ---")
+            termination_reason = "Unknown"
             
             while not done:
-                # Predict action using the loaded model
-                # deterministic=True is usually preferred for evaluation
                 action, _states = model.predict(obs, deterministic=True)
-                
-                # Take action in environment
                 obs, rewards, dones, infos = env.step(action)
                 
-                # Check for termination reason in info
-                termination_reason = "None"
-                if dones[0] and isinstance(infos[0], dict):
-                    termination_reason = infos[0].get('termination_reason', 'None')
+                # SB3 automatic reset: when dones[0] is True, the info dict contains the terminal info
+                if dones[0]:
+                    termination_reason = infos[0].get('termination_reason', 'Success/Timeout')
                 
                 total_reward += rewards[0]
                 steps += 1
                 done = dones[0]
 
-                if steps % 10 == 0:
-                    print(f"Step: {steps} | Current Reward: {total_reward:.2f}", end="\r")
+                if steps % 5 == 0:
+                    print(f"  [Eval] Episode {episode} | Score: {total_reward:.1f}", end="\r")
 
-            print(f"\nEpisode {episode} finished!")
-            print(f"Total Steps: {steps}")
-            print(f"Total Reward: {total_reward:.2f}")
-            print(f"Termination Reason: {termination_reason}")
-            time.sleep(2) # Brief pause between episodes
+            # Clear live line and print episode summary
+            print(f"                                                                ", end="\r")
+            print(f"  [FINISHED] Episode: {episode} | Steps: {steps} | Total Reward: {total_reward:.1f} | Reason: {termination_reason}")
+            
+            eval_stats.append({
+                'episode': episode,
+                'steps': steps,
+                'reward': total_reward,
+                'reason': termination_reason
+            })
+            time.sleep(0.5)
+
+        # 6. Print Summary Table
+        print("\n" + "="*71)
+        print(f"{'EVALUATION SUMMARY':^70}|")
+        print("="*71)
+        header = f"{'Episode':^10} | {'Steps':^10} | {'Reward':^10} | {'Termination Reason':^31}|"
+        print(header)
+        print("-" * 70 + "|")
+        
+        for stat in eval_stats:
+            print(f"{stat['episode']:^10} | {stat['steps']:^10} | {stat['reward']:^10.2f} | {stat['reason']:^31}|")
+        
+        print("-" * 70 + "|")
+        mean_steps = np.mean([s['steps'] for s in eval_stats])
+        mean_reward = np.mean([s['reward'] for s in eval_stats])
+        
+        success_count = sum(1 for s in eval_stats if s['reason'] == "Reached Target Destination")
+        total_episodes = len(eval_stats)
+        success_rate = (success_count / total_episodes) * 100 if total_episodes > 0 else 0
+        
+        print(f"{'AVERAGE':^10} | {mean_steps:^10.1f} | {mean_reward:^10.2f} | Success: {success_count}/{total_episodes} ({success_rate:.0f}%)" + "            |")
+        print("="*71 + "\n")
+
     except KeyboardInterrupt:
         print("\nEvaluation interrupted by user.")
     finally:
