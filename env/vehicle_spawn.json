@@ -20,7 +20,7 @@
         "traffic_density": "None",
         "situation": "Road"
     },
-    "Lane Change 1": {
+    "Lane Change to Left": {
         "map_name": "Town05",
         "weather_condition": "Clear Noon",
         "initial_position": {
@@ -41,7 +41,7 @@
         "traffic_density": "None",
         "situation": "Road"
     },
-    " Lane Change 2": {
+    "Lane Change to Right": {
         "map_name": "Town05",
         "weather_condition": "Clear Noon",
         "initial_position": {
@@ -62,7 +62,7 @@
         "traffic_density": "None",
         "situation": "Road"
     },
-    "Lane Closure (sudden squeeze)": {
+    "Lane Guidance": {
         "map_name": "Town05",
         "weather_condition": "Clear Noon",
         "initial_position": {

@@ -23,6 +23,13 @@ class TrafficControl:
     def update_map(self, map):
         self.__map = map
 
+    def set_all_traffic_lights_green(self):
+        """Finds all traffic lights and forces them to stay green."""
+        traffic_lights = self.__world.get_actors().filter('traffic.traffic_light')
+        for light in traffic_lights:
+            light.set_state(carla.TrafficLightState.Green)
+            light.freeze(True)
+
     # ============ Vehicle Control ============
     def spawn_vehicles(self, num_vehicles = 10, autopilot_on = False):
         if num_vehicles < 1:

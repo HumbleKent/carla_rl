@@ -65,8 +65,13 @@ class PreProcessing:
             last_brake
         ]
         
+        # 6. Process RGB image (Resize to 224x224 to save memory and match EfficientNet)
+        rgb_image = observation_data['rgb_data']
+        if rgb_image.shape[0] != 224 or rgb_image.shape[1] != 224:
+            rgb_image = cv2.resize(rgb_image, (224, 224), interpolation=cv2.INTER_AREA)
+            
         neo_observation_data = {
-            'rgb_data': observation_data['rgb_data'],
+            'rgb_data': rgb_image,
             'rest': np.array(rest_list, dtype=np.float32)
         }
         

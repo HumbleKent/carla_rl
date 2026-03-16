@@ -33,7 +33,7 @@ except Exception:
     pass
 
 class EpisodeEvalCallback(BaseCallback):
-    def __init__(self, eval_port, eval_ep_freq, save_ep_freq, log_path, save_path, n_eval_episodes=5, deterministic=True, initial_episode=0):
+    def __init__(self, eval_port, eval_ep_freq, save_ep_freq, log_path, save_path, n_eval_episodes=5, deterministic=True, initial_episode=0, scenarios=None):
         super().__init__(verbose=1)
         self.eval_port = eval_port
         self.eval_ep_freq = eval_ep_freq
@@ -52,6 +52,7 @@ class EpisodeEvalCallback(BaseCallback):
         self.evaluations_timesteps = []
         self.evaluations_results = []
         self.evaluations_length = []
+        self.scenarios = scenarios
 
     def _on_step(self) -> bool:
         # Check termination and logic...
@@ -115,6 +116,7 @@ class EpisodeEvalCallback(BaseCallback):
                                                                          spawn_cones=True,
                                                                          is_eval=True,
                                                                          verbose=False,
+                                                                         scenarios=self.scenarios,
                                                                          debug_features=['target']))])
                         eval_env = VecTransposeImage(eval_env)
                         
@@ -181,7 +183,7 @@ class EpisodeEvalCallback(BaseCallback):
         
         return True
 
-def make_env(port, rank=0, spawn_cones=False):
+def make_env(port, rank=0, spawn_cones=False, scenarios=None):
     def _init():
         log_file = f"logs_cone/worker_{port}_log.txt"
         os.makedirs("logs_cone", exist_ok=True)
@@ -198,6 +200,7 @@ def make_env(port, rank=0, spawn_cones=False):
                            show_sensor_data=False,  # Disabled: subprocesses can't display Pygame windows
                            spawn_cones=True,
                            verbose=worker_verbose,
+                           scenarios=scenarios,
                            debug_features=[])
             
             with open(log_file, "a") as f: f.write(f"gym.make succeeded. Calling env.reset()...\n"); f.flush()
@@ -217,7 +220,7 @@ def make_env(port, rank=0, spawn_cones=False):
             raise
     return _init
 
-def make_eval_env(port):
+def make_eval_env(port, scenarios=None):
     """Create a dedicated single-process eval env on the given port.
     
     IMPORTANT: Never pass the training env to EvalCallback — doing so causes
@@ -232,8 +235,7 @@ def make_eval_env(port):
                        synchronous_mode=True,
                        show_sensor_data=False,  # Disabled: eval env also runs in subprocess during training
                        spawn_cones=True,
-                       verbose=worker_verbose,
-                       debug_features=[],
+                       scenarios=scenarios,
                        is_eval=True)  # No jitter during eval
         env = Monitor(env)
         return env
@@ -249,14 +251,17 @@ def main():
         return _init
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--ports", nargs='+', type=int, default=[2000], help="List of CARLA server ports")
-    parser.add_argument("--run-name", type=str, default="v1", help="Unique name for this training run")
-    parser.add_argument("--load-path", type=str, default=None, help="Path to a previous model to continue training")
-    parser.add_argument("--eval-ep-freq", type=int, default=25, help="Number of episodes between evaluations")
-    parser.add_argument("--save-ep-freq", type=int, default=50, help="Number of episodes between model checkpoints")
-    parser.add_argument("--total-steps", type=int, default=1000000, help="Total timesteps to train for")
-    parser.add_argument("--eval-port", type=int, default=4000, help="Dedicated port for evaluation (optional)")
+    parser.add_argument("--ports","-p", nargs='+', type=int, default=[2000], help="List of CARLA server ports")
+    parser.add_argument("--run-name","-n", type=str, default="v1", help="Unique name for this training run")
+    parser.add_argument("--load-path","-l", type=str, default=None, help="Path to a previous model to continue training")
+    parser.add_argument("--eval-ep-freq","-e", type=int, default=25, help="Number of episodes between evaluations")
+    parser.add_argument("--save-ep-freq","-s", type=int, default=50, help="Number of episodes between model checkpoints")
+    parser.add_argument("--total-steps","-t", type=int, default=1000000, help="Total timesteps to train for")
+    parser.add_argument("--eval-port","-ep", type=int, default=4000, help="Dedicated port for evaluation (optional)")
+    parser.add_argument("--scenario","-sc", type=str, default=None, help="Specific scenario to train on (default: all)")
     args = parser.parse_args()
+
+    train_scenarios = [args.scenario] if args.scenario else []
 
 
     worker_verbose = False
@@ -315,12 +320,13 @@ def main():
                     return Monitor(gym.make('carla-rl-gym-v0', 
                                    port=p, 
                                    time_limit=30, 
-                                   initialize_server=False, 
-                                   synchronous_mode=True, 
-                                   show_sensor_data=False,
-                                   spawn_cones=True,
-                                   verbose=worker_verbose,
-                                   debug_features=[]))
+                                    initialize_server=False, 
+                                    synchronous_mode=True, 
+                                    show_sensor_data=False,
+                                    spawn_cones=True,
+                                    verbose=worker_verbose,
+                                    scenarios=train_scenarios,
+                                    debug_features=[]))
                 except Exception as e:
                     print(f"FAILED to create environment on port {p}: {e}")
                     raise
@@ -337,6 +343,7 @@ def main():
                                                    show_sensor_data=False,
                                                    spawn_cones=True,
                                                    verbose=worker_verbose,
+                                                   scenarios=train_scenarios,
                                                    debug_features=[]))])
     
     env = VecTransposeImage(env)
@@ -384,7 +391,8 @@ def main():
         save_ep_freq=args.save_ep_freq,
         log_path=log_dir,
         save_path=checkpoint_dir,
-        initial_episode=initial_episode
+        initial_episode=initial_episode,
+        scenarios=train_scenarios
     )
 
     # 6. LEARN

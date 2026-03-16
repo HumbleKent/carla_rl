@@ -146,6 +146,9 @@ class World:
         self.__cone_control.update_map(self.__map)
         return self.__map
     
+    def set_all_traffic_lights_green(self):
+        self.__traffic_control.set_all_traffic_lights_green()
+    
     # ============ Weather Control ===============
     def get_weather_presets(self):
         return self.__weather_control.get_weather_presets()

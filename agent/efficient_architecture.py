@@ -8,33 +8,41 @@ from gymnasium import spaces
 import numpy as np
 
 # Define the action space for PPO
-action_space = spaces.Box(low=np.array([-1.0, -1.0]), high=np.array([1.0, 1.0]), dtype=np.float32)
+continuous_action_space = spaces.Box(low=np.array([-1.0, -1.0]), high=np.array([1.0, 1.0]), dtype=np.float32)
 
 class CustomExtractor_PPO_EfficientNet(BaseFeaturesExtractor):
+    """
+    Improved Feature Extractor for PPO with EfficientNet-B0.
+    
+    Refinements:
+    - Robust input processing: handles uint8/float and NHWC/NCHW formats.
+    - Standardized backbone: switched to torchvision.models for better stability.
+    - Efficiency: added torch.no_grad() for the frozen EfficientNet backbone.
+    - Consistency: aligned with CustomExtractor_PPO_Modular patterns.
+    """
     def __init__(self, observation_space: spaces.Dict):
-        # Image features from EfficientNet-B1 (after Global Average Pooling) is 1280 (for B0) 
-        # B0: 1280, B1: 1280.
+        # Image features from EfficientNet-B0 is 1280
         image_dim = 1280  
-        rest_dim = 128   # Dimensionality of the rest features
+        rest_dim = 256   # Dimensionality of the MLP output
         features_dim = image_dim + rest_dim
-        
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
         super().__init__(observation_space, features_dim=features_dim)
         
-        # 1. EfficientNet-B0 for Image Feature Extraction
-        # We use weights=EfficientNet_B0_Weights.DEFAULT for pretrained features
-        # which usually generalize better for visual tasks.
-        self.efficientman = models.efficientnet_b0(weights=EfficientNet_B0_Weights.DEFAULT)
-        
-        # Remove the classification head (classifier), we only want the features
-        self.image_model = self.efficientman.features
-        
-        # Add a Global Average Pooling layer to get a fixed-size vector (1280)
-        self.avgpool = nn.AdaptiveAvgPool2d(1)
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.action_dim = continuous_action_space.shape[0]
 
-        # 2. MLP for processing the "Rest" vector (8 features)
-        # Input: 8 (Velocities, Ang vel, Yaw error, Target dist, Prev action)
+        # Use weights=DEFAULT for the latest stable EfficientNet-B0 weights from torchvision
+        self.efficientnet_base = models.efficientnet_b0(weights=EfficientNet_B0_Weights.DEFAULT)
+        self.efficientnet = self.efficientnet_base.features
+        
+        # Freeze the backbone parameters
+        for param in self.efficientnet.parameters():
+            param.requires_grad = False  
+        self.efficientnet.eval()
+
+        self.global_avg_pool = nn.AdaptiveAvgPool2d(1)
+
+        # MLP for processing the non-visual "rest" vector (8 features: Vel, AngVel, Error, etc.)
         self.rest_model = nn.Sequential(
             nn.Linear(8, 128),
             nn.ReLU(),
@@ -43,39 +51,30 @@ class CustomExtractor_PPO_EfficientNet(BaseFeaturesExtractor):
         )
 
     def forward(self, observations):
-        rgb_input, rest_input = self.process_observations(observations)
-        
-        # Extract image features
-        image_features = self.image_model(rgb_input)
-        image_features = self.avgpool(image_features)
-        image_features = torch.flatten(image_features, 1)
-
-        # Extract rest features
-        rest_output = self.rest_model(rest_input)
-        
-        # Ensure batch dimension for rest_output if needed (though SB3 handles this)
-        if len(rest_output.shape) == 1:
-            rest_output = rest_output.unsqueeze(0)
-
-        # Concatenate both feature sets
-        combined_features = torch.cat((image_features, rest_output), dim=1)
-        return combined_features
-
-    def process_observations(self, observations):
-        # 1. Image Processing
+        # 1. Process RGB Data
         rgb_data = observations['rgb_data']
         
-        # If input is uint8 (0-255), convert to float and normalize to [0, 1]
-        # This acts as a safety layer if SB3 hasn't normalized it yet
+        # Scale uint8 images [0, 255] to float [0, 1]
         if rgb_data.dtype == torch.uint8:
             rgb_data = rgb_data.float() / 255.0
-
-        # Ensure (Batch, Channels, H, W) format
-        # If input is (Batch, H, W, Channels), transpose it
+            
+        # Handle NHWC (B, H, W, C) -> NCHW (B, C, H, W) conversion if necessary
         if rgb_data.shape[-1] == 3 and len(rgb_data.shape) == 4:
             rgb_data = rgb_data.permute(0, 3, 1, 2)
+            
+        # Ensure image size is 224x224 (EfficientNet standard)
+        if rgb_data.shape[-2:] != (224, 224):
+            rgb_data = F.interpolate(rgb_data, size=(224, 224), mode='bilinear', align_corners=False)
 
-        # Resize to EfficientNet's expected input size (224x224)
-        rgb_data = F.interpolate(rgb_data, size=(224, 224), mode='bilinear', align_corners=False)
+        # Extract features without tracking gradients for the frozen backbone
+        with torch.no_grad():
+            image_features = self.efficientnet(rgb_data)
         
-        return (rgb_data.to(self.device), observations['rest'].to(self.device))
+        image_features = self.global_avg_pool(image_features)
+        image_features = torch.flatten(image_features, 1)
+
+        # 2. Process scalar "rest" features
+        rest_output = self.rest_model(observations['rest'])
+
+        # 3. Concatenate and return the combined feature vector
+        return torch.cat((image_features, rest_output), dim=1)

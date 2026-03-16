@@ -42,7 +42,7 @@ class CustomExtractor_PPO_Cone(BaseFeaturesExtractor):
         ) 
 
         # Define the neural network architecture for processing the rest of the input
-        # Input: 23 (2 nav + 4 kinematics + 2 action + 15 cones)
+        # Input: 23 (Kinematics + Heading + Goal + Action History + Cone Proximity)
         self.rest_model = nn.Sequential(
             nn.Linear(23, 64),
             nn.ReLU(),

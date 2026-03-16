@@ -353,7 +353,7 @@ class CarlaEnv(gym.Env):
         
         # Weather
         self.__load_weather(scenario_dict['weather_condition'])
-        
+
         # Ego vehicle
         self.__spawn_vehicle(scenario_dict)
             
@@ -365,7 +365,7 @@ class CarlaEnv(gym.Env):
         if self.__has_traffic:
             self.__spawn_traffic(seed=seed)
         
-        self.__toggle_lights()
+        self.__world.set_all_traffic_lights_green()
 
     def clean_scenario(self):
         self.__vehicle.destroy_vehicle()
@@ -520,7 +520,7 @@ class CarlaEnv(gym.Env):
         with open(config.ENV_SCENARIOS_FILE, 'r') as f:
             self.situations_dict = json.load(f)
         if scenarios:
-            self.situations_dict = {k: v for k, v in self.situations_dict.items() if v['situation'] in scenarios}
+            self.situations_dict = {k: v for k, v in self.situations_dict.items() if (v['situation'] in scenarios or k in scenarios)}
         self.situations_list = list(self.situations_dict.keys())
 
     def __choose_random_situation(self, seed=None):
