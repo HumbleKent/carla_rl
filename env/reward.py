@@ -21,6 +21,7 @@ class Reward:
 
     # ======================================== Main Reward Function ==========================================================
     def calculate_reward(self, vehicle: Vehicle, current_pos, target_pos, next_waypoint_pos, speed, yaw_error=0.0, cone_data=None, step_count=0, verbose=False, debug_manager=None) -> float:   
+
         target_distance = self.distance(current_pos, target_pos)
         next_waypoint_distance = self.distance(current_pos, next_waypoint_pos)
         
@@ -46,7 +47,7 @@ class Reward:
         self.prev_target_distance = target_distance
 
         # 4. Proximity Cone Penalty
-        cone_proximity_penalty = self.__proximity_cone_penalty(cone_data, safe_distance=3.0)
+        cone_proximity_penalty = self.__proximity_cone_penalty(cone_data)
 
         # 5. Core components
         coll_reward = self.__collision_reward(vehicle, verbose, debug_manager)
@@ -105,7 +106,7 @@ class Reward:
             # New termination condition: Hitting a cone ends the episode
             self.terminated = True
             self.termination_reason = "Hit a traffic cone"
-            penalty -= 30.0
+            penalty -= 150.0 # Increased from 30 to make collisions definitively worse than any small progress
             if debug_manager:
                 debug_manager.log("term", "Hit a traffic cone!")
             elif verbose: 
@@ -115,7 +116,7 @@ class Reward:
         if vehicle.solid_line_crossed():
             self.terminated = True
             self.termination_reason = "Crossed a solid line"
-            penalty -= 50.0
+            penalty -= 150.0 # Increased from 100
             if debug_manager:
                 debug_manager.log("term", "Crossed a solid line!")
             elif verbose: 
@@ -130,7 +131,6 @@ class Reward:
 
         return penalty
 
-        
     def __steering_jerk(self, vehicle, threshold=0.2):
         lbd = 10/config.ENV_MAX_STEPS
         steering_diff = abs(vehicle.get_steering() - self.current_steering)
@@ -155,14 +155,12 @@ class Reward:
             return 1.0 - (speed - speed_limit) * 0.1
 
     def __stand_still_penalty(self, speed):
-        """Strongly penalize the agent for not moving when it should be."""
+        """Penalize the agent for not moving, but not so harshly it can't be cautious."""
         if speed < 1.0:
-            # Increased to -10.0 to make it extremely painful to stay still.
-            # This forces the agent to explore even if it's scared of cones.
             return -1.0
         return 0.0
  
-    def __proximity_cone_penalty(self, cone_data, safe_distance=3.0):
+    def __proximity_cone_penalty(self, cone_data, safe_distance=1.8):
         """Penalize being too close to a cone (near-miss penalty)."""
         if not cone_data:
             return 0.0
@@ -183,7 +181,7 @@ class Reward:
                 debug_manager.log("term", "Reached Target Destination! (Success)")
             elif verbose: 
                 print("\n[REWARD] TERMINATED: Reached Target Destination! (Success)")
-            return 500.0 # Massive bonus to ensure the model prioritizes finishing
+            return 300.0 # Massive bonus to ensure the model prioritizes finishing
         elif target_distance > threshold and target_distance <= 50.0:
             return (-7.0*target_distance + 395.0) / (9.0 * config.ENV_MAX_STEPS)
         elif target_distance > 50.0 and target_distance <= 100.0:
@@ -191,7 +189,7 @@ class Reward:
         else:
             return 0.0
         
-    def __waypoint_reached(self, next_waypoint_distance, threshold=1.0):
+    def __waypoint_reached(self, next_waypoint_distance, threshold=1):
         '''
         Waypoints are popped to update the heading guidance (breadcrumbs), 
         but we no longer give an explicit reward for hitting them.
@@ -199,7 +197,7 @@ class Reward:
         if next_waypoint_distance < threshold:
             if self.waypoints:
                 self.waypoints.pop(0)
-            return 0.0
+            return 2.0
         else:
             return 0.0
         

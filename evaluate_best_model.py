@@ -29,8 +29,9 @@ def main():
     parser = argparse.ArgumentParser(description="Evaluate the best trained CARLA RL model")
     parser.add_argument("--port", "-p", type=int, default=config.SIM_PORT, help="CARLA server port")
     parser.add_argument("--name", "-n", type=str, default="blackwell_fast_v1", help="Name of the training run")
-    parser.add_argument("--episodes", "-ep", type=int, default=5, help="Number of evaluation episodes")
+    parser.add_argument("--episodes", "-ep", type=int, default=10, help="Number of evaluation episodes")
     parser.add_argument("--efficient", "-eff", action="store_true", help="Force use of EfficientNet architecture")
+    parser.add_argument("--scenario", "-sc", type=str, default=None, help="The scenario to evaluate (e.g. 'Lane Guidance')")
     args = parser.parse_args()
 
     # 2. Define path to the best model
@@ -46,6 +47,7 @@ def main():
     # 3. Initialize the environment
     # We use DummyVecEnv and VecTransposeImage to match the training observation processing
     def make_env():
+        scenarios = [args.scenario] if args.scenario else []
         env = gym.make('carla-rl-gym-v0', 
                        port=args.port, 
                        time_limit=120, 
@@ -53,6 +55,7 @@ def main():
                        synchronous_mode=True, 
                        show_sensor_data=False, 
                        spawn_cones=True, 
+                       scenarios=scenarios,
                        verbose=False)
         return env
 

@@ -46,7 +46,7 @@
         "weather_condition": "Clear Noon",
         "initial_position": {
             "x": 31.56,
-            "y": -21.76,
+            "y": -17,
             "z": 0.3
         },
         "initial_rotation": {

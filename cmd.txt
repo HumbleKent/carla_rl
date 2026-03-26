@@ -2,12 +2,13 @@ conda activate carla_blackwell
 
 tensorboard --logdir ./tensorboard_cone/
 
-cd C:\Users\User\Documents\CARLA_0.9.15\WindowsNoEditor; .\CarlaUE4.exe -carla-rpc-port=2000 -windowed -ResX=800 -ResY=450 -WinX=0 -WinY=100
+cd C:\Users\User\Documents\CARLA_0.9.15\WindowsNoEditor; .\CarlaUE4.exe -carla-rpc-port=2000 -windowed -ResX=800 -ResY=450 -WinX=0 -WinY=100 -RenderOffScreen
 
-cd C:\Users\User\Documents\CARLA_0.9.15\WindowsNoEditor; .\CarlaUE4.exe -carla-rpc-port=3000 -windowed -ResX=800 -ResY=450 -WinX=0 -WinY=600
+cd C:\Users\User\Documents\CARLA_0.9.15\WindowsNoEditor; .\CarlaUE4.exe -carla-rpc-port=3000 -windowed -ResX=800 -ResY=450 -WinX=0 -WinY=600 -RenderOffScreen
 
-python train_cone_avoidance.py --ports 2000 3000 --run-name parallel_run_v1
+python .\train_cone_avoidance.py -p 2000 3000 -n test_lane_change_left -sc "Lane Change to Left"
 
-python evaluate_best_model.py --name huge_stand_penalty -eff --episodes 10
+python debug_session.py --name test_eff_8features -eff --episodes 10
 
-python debug_session.py --name huge_stand_penalty -eff --episodes 10
+python train_cone_avoidance.py --ports 2000 3000 --run-name test_new_arch --load-path checkpoints/ppo_cone_test_new_arch/ppo_ep1650.zip
+

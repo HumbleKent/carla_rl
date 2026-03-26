@@ -165,6 +165,7 @@ class CarlaEnv(gym.Env):
             raise NotImplementedError("This mode is not implemented yet")
 
     def step(self, action):
+        self.__vehicle.reset_step()
         if self.__synchronous_mode:
             self.__world.tick()
             
