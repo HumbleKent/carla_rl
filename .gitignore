@@ -11,3 +11,12 @@ checkpoints/
 tensorboard_cone/
 logs_cone/
 auxi/z
+manual_control.py
+plan_waypoints.py
+spawn_cone_json.py
+cmd.txt
+spawn_at_spec.py
+compare_waypoints.py
+compare_wp.py
+sb3_ppo_architecture.py
+env/environment.py.bak
