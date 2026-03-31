@@ -34,8 +34,8 @@
             "roll": 0.0
         },
         "target_position": {
-            "x": 35.05,
-            "y": 17,
+            "x": 31.85,
+            "y": 27.16,
             "z": 0.3
         },
         "traffic_density": "None",
@@ -55,8 +55,8 @@
             "roll": 0.0
         },
         "target_position": {
-            "x": 32.80,
-            "y": -70.28,
+            "x": 36.39,
+            "y": -67.92,
             "z": 0.3
         },
         "traffic_density": "None",
