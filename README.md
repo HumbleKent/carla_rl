@@ -81,11 +81,6 @@ CARLA-RL-Agents/
 ## Installation
 
 1. **Clone the repository:**
-   ```bash
-   git clone https://github.com/<your-username>/CARLA-RL-Agents.git
-   cd CARLA-RL-Agents
-   ```
-
 2. **Create & activate the Conda environment:**
    ```bash
    conda env create -f environment.yml
