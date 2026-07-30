@@ -1,0 +1,86 @@
+{
+    "Pothole Repair Zones": {
+        "map_name": "Town05",
+        "weather_condition": "Clear Noon",
+        "initial_position": {
+            "x": -28.06,
+            "y": 6.22,
+            "z": 0.3
+        },
+        "initial_rotation": {
+            "pitch": 0.0,
+            "yaw": 1.67,
+            "roll": 0.0
+        },
+        "target_position": {
+            "x": -2.00,
+            "y": 6.16,
+            "z": 0.3
+        },
+        "traffic_density": "None",
+        "situation": "Road"
+    },
+    "Lane Change to Left": {
+        "map_name": "Town05",
+        "weather_condition": "Clear Noon",
+        "initial_position": {
+            "x": 35.37,
+            "y": 73.60,
+            "z": 0.3
+        },
+        "initial_rotation": {
+            "pitch": 0.0,
+            "yaw": -90.21,
+            "roll": 0.0
+        },
+        "target_position": {
+            "x": 31.85,
+            "y": 27.16,
+            "z": 0.3
+        },
+        "traffic_density": "None",
+        "situation": "Road"
+    },
+    "Lane Change to Right": {
+        "map_name": "Town05",
+        "weather_condition": "Clear Noon",
+        "initial_position": {
+            "x": 31.56,
+            "y": -21.76,
+            "z": 0.3
+        },
+        "initial_rotation": {
+            "pitch": 0.0,
+            "yaw": -86.93,
+            "roll": 0.0
+        },
+        "target_position": {
+            "x": 32.80,
+            "y": -70.28,
+            "z": 0.3
+        },
+        "traffic_density": "None",
+        "situation": "Road"
+    },
+    "Lane Guidance": {
+        "map_name": "Town05",
+        "weather_condition": "Clear Noon",
+        "initial_position": {
+            "x": -107.11,
+            "y": -138.74,
+            "z": 0.3
+        },
+        "initial_rotation": {
+            "pitch": 0.0,
+            "yaw": 4.48,
+            "roll": 0.0
+        },
+        "target_position": {
+            "x": -8.02,
+            "y": -88.00,
+            "z": 0.3
+        },
+        "traffic_density": "None",
+        "situation": "Road"
+    }
+}

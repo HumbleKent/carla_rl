@@ -1,0 +1,24 @@
+{
+    "rgb_camera": {
+        "image_size_x": 360,
+        "image_size_y": 360,
+        "fov": 100,
+        "sensor_tick": 0.0,
+        "location_x": 0.0,
+        "location_y": 0.0,
+        "location_z": 15.0,
+        "rotation_pitch": -90.0,
+        "rotation_yaw": 0.0,
+        "rotation_roll": 0.0
+    },
+    "collision": {
+        "location_x": 0.0,
+        "location_y": 0.0,
+        "location_z": 0.0
+    },
+    "lane_invasion": {
+        "location_x": 0.0,
+        "location_y": 0.0,
+        "location_z": 0.0
+    }
+}

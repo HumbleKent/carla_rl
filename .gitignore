@@ -1,0 +1,10 @@
+# Python byte-code cache
+__pycache__/
+
+# Output directories (ignore contents, keep directory structure)
+logs_cone/*
+!logs_cone/.gitkeep
+checkpoints/*
+!checkpoints/.gitkeep
+tensorboard_cone/*
+!tensorboard_cone/.gitkeep

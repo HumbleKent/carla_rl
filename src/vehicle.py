@@ -1,0 +1,354 @@
+'''
+Vehicle Module:
+    It provides the functionality to create and destroy the vehicle and attach the sensors present in a JSON file to it.
+
+    It also provides the functionlity to control the vehicle based on the action space provided by the environment.
+'''
+
+import carla
+import random
+import json
+import os
+
+import configuration
+import src.sensors as sensors
+
+class Vehicle:
+    def __init__(self, world, camera='front'):
+        self.__vehicle = None
+        self.__sensor_dict = {}
+        self.__world = world
+        self.__camera_view = camera
+
+        self.__control = carla.VehicleControl()
+        self.__ackermann_control = carla.VehicleAckermannControl()
+
+        # Vehicle Control attributes for discrete action space
+        self.__throttle = 0.0
+        self.__brake = 0.0
+        self.__steering_angle = 0.0 # [-1.0, 1.0]
+        self.__speed = 0.0 # In Km/h
+
+    def get_vehicle(self):
+        return self.__vehicle
+
+    def get_world_obj(self):
+        return self.__world
+
+    def get_location(self):
+        return self.__vehicle.get_location()
+
+    def get_rotation(self):
+        """Returns the rotation as a list: [pitch, yaw, roll]"""
+        rot = self.__vehicle.get_transform().rotation
+        return [rot.pitch, rot.yaw, rot.roll]
+
+    def set_autopilot(self, boolean):
+        if self.__vehicle:
+            self.__vehicle.set_autopilot(boolean)
+        else:
+            print("Error: No vehicle to set autopilot. Try spawning the vehicle first.")
+    
+    def collision_occurred(self):
+        if 'collision' not in self.__sensor_dict:
+            print("[WARNING] collision_occurred() called but 'collision' sensor not in sensor_dict. Returning False.")
+            return False
+        return self.__sensor_dict['collision'].collision_occurred()
+
+    def hit_cone(self):
+        if 'collision' not in self.__sensor_dict:
+            return False
+        return self.__sensor_dict['collision'].hit_cone()
+
+    def lane_invasion_occurred(self):
+        if 'lane_invasion' not in self.__sensor_dict:
+            print("[WARNING] lane_invasion_occurred() called but 'lane_invasion' sensor not in sensor_dict. Returning False.")
+            return False
+        return self.__sensor_dict['lane_invasion'].lane_invasion_occurred()
+
+    def solid_line_crossed(self):
+        """Returns True if a solid (non-crossable) lane marking was crossed this step."""
+        if 'lane_invasion' not in self.__sensor_dict:
+            return False
+        return self.__sensor_dict['lane_invasion'].solid_line_crossed()
+
+    def reset_step(self):
+        """Resets the flags for the collision and lane invasion sensors."""
+        if 'collision' in self.__sensor_dict:
+            self.__sensor_dict['collision'].reset_step()
+        if 'lane_invasion' in self.__sensor_dict:
+            self.__sensor_dict['lane_invasion'].reset_step()
+
+    def spawn_vehicle(self, location=None, rotation=None):
+        # Check if the vehicle is already spawned
+        if self.__vehicle is not None:
+            if configuration.VERBOSE:
+                print("Error: Vehicle already spawned. Destroy the vehicle first.")
+            
+            self.destroy_vehicle()
+
+        vehicle_id = self.__read_vehicle_file(configuration.VEHICLE_PHYSICS_FILE)["id"]
+
+        vehicle_bp = self.__world.get_blueprint_library().filter(vehicle_id)
+        
+        # If location is not provided, spawn the vehicle in a random location
+        if location is None:
+            spawn_points = self.__world.get_map().get_spawn_points()
+            while self.__vehicle is None:
+                spawn_point = random.choice(spawn_points)
+                transform = carla.Transform(
+                    spawn_point.location,
+                    spawn_point.rotation
+                )
+                try:
+                    self.__vehicle = self.__world.try_spawn_actor(random.choice(vehicle_bp), transform)
+                except:
+                    # try again if failed to spawn vehicle
+                    pass
+            print("Spawning vehicle at random location: ", spawn_point.location, " and rotation: ", spawn_point.rotation, " Spawn point: ", spawn_point)
+        # If location is provided, spawn the vehicle in the provided location and rotation
+        else:
+            carla_location = carla.Location(x=location[0], y=location[1], z=location[2])
+            carla_rotation = carla.Rotation(pitch=rotation[0], yaw=rotation[1], roll=rotation[2])
+            transform = carla.Transform(
+                carla_location,
+                carla_rotation
+            )
+            if configuration.VERBOSE:
+                print("Spawning ego vehicle at location: ", carla_location, " and rotation: ", carla_rotation, " Transform: ", transform)
+            try:
+                self.__vehicle = self.__world.try_spawn_actor(random.choice(vehicle_bp), transform)
+                if self.__vehicle is None:
+                    raise RuntimeError(f"Collision at spawn point {carla_location}. Vehicle could not be spawned.")
+            except Exception as e:
+                raise RuntimeError(f"Failed to spawn vehicle: {e}")
+        
+        # Attach sensors
+        vehicle_data = self.__read_vehicle_file(configuration.VEHICLE_SENSORS_FILE)
+        self.__attach_sensors(vehicle_data, self.__world, camera=self.__camera_view)
+
+    def get_sensor_dict(self):
+        return self.__sensor_dict
+
+    def __read_vehicle_file(self, filename):
+        with open(filename) as f:
+            vehicle_data = json.load(f)
+        
+        return vehicle_data
+    
+    def destroy_vehicle(self):
+        if self.__vehicle is None:
+            return
+
+        # Destroy sensors
+        for sensor in self.__sensor_dict:
+            self.__sensor_dict[sensor].destroy()
+        self.__vehicle.destroy()
+        del self.__sensor_dict, self.__vehicle
+        if configuration.VERBOSE:
+            print("Successfully destroyed the ego vehicle and its sensors.")
+        self.__vehicle = None
+        self.__sensor_dict = {}
+
+    # ====================================== Vehicle Sensors ======================================
+    def __attach_sensors(self, vehicle_data, world, camera='front'):
+        # Override camera settings based on selection if needed
+        if 'rgb_camera' in vehicle_data:
+            if camera == 'bev':
+                vehicle_data['rgb_camera'].update({
+                    "location_x": 0.0,
+                    "location_y": 0.0,
+                    "location_z": configuration.BEV_HEIGHT, # Height same as spectator
+                    "rotation_pitch": -90.0,
+                    "rotation_yaw": 0.0,
+                    "rotation_roll": 0.0,
+                    "fov": configuration.BEV_FOV
+                })
+            elif camera == 'front':
+                vehicle_data['rgb_camera'].update({
+                    "location_x": 0.8,
+                    "location_y": 0.0,
+                    "location_z": 1.7,
+                    "rotation_pitch": 0.0,
+                    "rotation_yaw": 0.0,
+                    "rotation_roll": 0.0,
+                    "fov": 90
+                })
+
+        for sensor in vehicle_data:
+            if sensor == 'rgb_camera':
+                self.__sensor_dict[sensor]    = sensors.RGB_Camera(world=world, vehicle=self.__vehicle, sensor_dict=vehicle_data['rgb_camera'])
+                os.makedirs('data/rgb_camera', exist_ok=True)
+            elif sensor == 'lidar':
+                self.__sensor_dict[sensor]    = sensors.Lidar(world=world, vehicle=self.__vehicle, sensor_dict=vehicle_data['lidar'])
+                os.makedirs('data/lidar', exist_ok=True)
+            elif sensor == 'radar':
+                self.__sensor_dict[sensor]    = sensors.Radar(world=world, vehicle=self.__vehicle, sensor_dict=vehicle_data['radar'])
+                os.makedirs('data/radar', exist_ok=True)
+            elif sensor == 'gnss':
+                self.__sensor_dict[sensor]    = sensors.GNSS(world=world, vehicle=self.__vehicle, sensor_dict=vehicle_data['gnss'])
+            elif sensor == 'imu':
+                self.__sensor_dict[sensor]    = sensors.IMU(world=world, vehicle=self.__vehicle, sensor_dict=vehicle_data['imu'])
+            elif sensor == 'collision':
+                self.__sensor_dict[sensor]    = sensors.Collision(world=world, vehicle=self.__vehicle, sensor_dict=vehicle_data['collision'])
+            elif sensor == 'lane_invasion':
+                self.__sensor_dict[sensor]    = sensors.Lane_Invasion(world=world, vehicle=self.__vehicle, sensor_dict=vehicle_data['lane_invasion'])
+            elif sensor == 'semantic_lidar':
+                self.__sensor_dict[sensor]    = sensors.Semantic_Lidar(world=world, vehicle=self.__vehicle, sensor_dict=vehicle_data['semantic_lidar'])
+                os.makedirs('data/semantic_lidar', exist_ok=True)
+            else:
+                print('Error: Unknown sensor ', sensor)
+    
+    # This method returns the observation data from the used sensors in the environment (it excludes the collision and lane invasion sensors, which are used for the reward function only). If you're using a different environment, you should change this method to return the observation data that you need.
+    def get_observation_data(self):
+        data_dict = {}
+        if 'rgb_camera' in self.__sensor_dict:
+            rgb_data = self.__sensor_dict['rgb_camera'].get_data()
+            data_dict['rgb_data'] = rgb_data
+        if 'lidar' in self.__sensor_dict:
+            lidar_data = self.__sensor_dict['lidar'].get_data()
+            data_dict['lidar_data'] = lidar_data
+        if 'semantic_lidar' in self.__sensor_dict:
+            semantic_lidar_data = self.__sensor_dict['semantic_lidar'].get_data()
+            data_dict['semantic_lidar_data'] = semantic_lidar_data
+        if 'gnss' in self.__sensor_dict:
+            gnss_data = self.__sensor_dict['gnss'].get_data()
+            data_dict['gnss_data'] = gnss_data
+        if 'imu' in self.__sensor_dict:
+            imu_data = self.__sensor_dict['imu'].get_data()
+            data_dict['imu_data'] = imu_data
+        if 'radar' in self.__sensor_dict:
+            radar_data = self.__sensor_dict['radar'].get_data()
+            data_dict['radar_data'] = radar_data
+
+        return data_dict
+
+    def sensors_ready(self):
+        for sensor in self.__sensor_dict:
+            if not self.__sensor_dict[sensor].is_ready():
+                return False
+        return True
+
+    # ====================================== Vehicle Physics ======================================
+
+    # Change the vehicle physics to a determined weather that is stated in the JSON file.
+    def __change_vehicle_physics(self, weather_condition):
+        # Read JSON file
+        physics_data = self.__read_vehicle_file(configuration.VEHICLE_PHYSICS_FILE)
+
+        # Check if the provided weather exists
+        if weather_condition not in physics_data["weather_conditions"]:
+            print(f"Weather physics configuration {weather_condition} does not exist!")
+            return
+
+        physics_control = self.__vehicle.get_physics_control()
+        physics_data = physics_data["weather_conditions"][weather_condition]
+
+        # Create Wheels Physics Control (This simulation assumes that wheels on the same axle have the same physics control)
+        front_wheels  = carla.WheelPhysicsControl(tire_friction=physics_data["front_wheels"]["tire_friction"], 
+                                                    damping_rate=physics_data["front_wheels"]["damping_rate"], 
+                                                    long_stiff_value=physics_data["front_wheels"]["long_stiff_value"])
+
+        rear_wheels   = carla.WheelPhysicsControl(tire_friction=physics_data["rear_wheels"]["tire_friction"], 
+                                                    damping_rate=physics_data["rear_wheels"]["damping_rate"], 
+                                                    long_stiff_value=physics_data["rear_wheels"]["long_stiff_value"])
+
+        wheels = [front_wheels, front_wheels, rear_wheels, rear_wheels]
+
+        physics_control.wheels = wheels
+        physics_control.mass = physics_data["vehicle"]["mass"]
+        physics_control.drag_coefficient = physics_data["vehicle"]["drag_coefficient"]
+        self.__vehicle.apply_physics_control(physics_control)
+        if configuration.VERBOSE:
+            print(f"Vehicle's physics changed to {weather_condition} weather")
+    
+    def adapt_to_weather(self, weather_condition):
+        # Change the vehicle physics depending on the weather condition
+        if "rain" in weather_condition.lower() or "wet" in weather_condition.lower():
+            self.__change_vehicle_physics("wet")
+        else:
+            self.__change_vehicle_physics("dry")
+
+    def print_vehicle_physics(self):
+        vehicle_physics = self.__vehicle.get_physics_control()
+        print("Vehicle's attributes:")
+        print(f"Vehicle's name: {self.__vehicle.type_id}")
+        print(f"mass: {vehicle_physics.mass}")
+        print(f"drag_coefficient: {vehicle_physics.drag_coefficient}")
+
+        # Wheels' attributes
+        print("\nFront Wheels' attributes:")
+        print(f"tire_friction: {vehicle_physics.wheels[0].tire_friction}")
+        print(f"damping_rate: {vehicle_physics.wheels[0].damping_rate}")
+        print(f"long_stiff_value: {vehicle_physics.wheels[0].long_stiff_value}")
+
+        print("\nRear Wheels' attributes:")
+        print(f"tire_friction: {vehicle_physics.wheels[1].tire_friction}")
+        print(f"damping_rate: {vehicle_physics.wheels[1].damping_rate}")
+        print(f"long_stiff_value: {vehicle_physics.wheels[1].long_stiff_value}")
+
+    # ====================================== Vehicle Control ======================================
+    # Control the vehicle based on the continuous action space provided by the environment. The action space is [steering_angle,throttle/brake], both between [-1, 1]
+    def control_vehicle(self, action):
+        self.__steering_angle = max(-1.0, min(float(action[0]), 1.0))
+        self.__control.steer = self.__steering_angle
+        if action[1] >= 0:
+            self.__throttle = min(float(action[1]), 1.0)
+            self.__brake = 0.0
+        else:
+            self.__throttle = 0.0
+            self.__brake = min(float(-action[1]), 1.0)
+        
+        self.__control.throttle = self.__throttle
+        self.__control.brake = self.__brake
+        self.__vehicle.apply_control(self.__control)
+
+    # Control the vehicle based on the discrete action space provided by the environment. The action space is [accelerate, decelerate, left, right]. Out of these, only one action can be taken at a time.
+    def control_vehicle_discrete(self, action):
+        action = float(action)
+        # Accelerate
+        if action == 0:
+            self.__speed += 0.5
+        # Decelerate
+        elif action == 1:
+            self.__speed = max(self.__speed - 0.5, 0.0)
+        # Left
+        elif action == 2:
+            self.__steering_angle = max(-1.0, self.__steering_angle - 0.1)
+        # Right
+        elif action == 3:
+            self.__steering_angle = min(1.0, self.__steering_angle + 0.1)
+            
+        
+        self.__ackermann_control.steer= self.__steering_angle
+        self.__ackermann_control.speed = self.__speed
+        self.__vehicle.apply_ackermann_control(self.__ackermann_control)
+    
+    def toggle_lights(self, lights_on=True):
+        if self.__vehicle is None:
+            return
+            
+        if lights_on:
+            self.__vehicle.set_light_state(carla.VehicleLightState(carla.VehicleLightState.Position | carla.VehicleLightState.LowBeam))
+        else:
+            self.__vehicle.set_light_state(carla.VehicleLightState.NONE)
+    
+    def get_throttle(self):
+        return self.__throttle
+    
+    def get_throttle_brake(self):
+        return self.__throttle if self.__throttle > 0.0 else -self.__brake
+
+    def get_steering(self):
+        return self.__steering_angle
+
+    def get_brake(self):
+        return self.__brake
+    
+    # In Km/h
+    def get_speed(self):
+        if self.__vehicle is None:
+            return 0.0
+        velocity = self.__vehicle.get_velocity()
+        return 3.6 * velocity.length()
+
